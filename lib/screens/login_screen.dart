@@ -6,6 +6,9 @@ import '../widgets/app_text_field.dart';
 import '../widgets/bottom_wave_clipper.dart';
 import '../widgets/primary_gradient_button.dart';
 import '../widgets/social_login_button.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// StrayCare login screen: back button, logo/wordmark, welcome copy,
 /// email + password fields, forgot-password link, login button, social
@@ -36,13 +39,54 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _handleLogin() {
-  Navigator.pushReplacement(
-    context,
-    MaterialPageRoute(
-      builder: (_) => const HomeScreen(),
-    ),
-  );
+  Future<void> _handleLogin() async {
+  try {
+    const String apiBaseUrl = "http://10.250.236.99:5000";
+
+    final response = await http.post(
+      Uri.parse("$apiBaseUrl/api/auth/login"),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode({
+        "email": _emailController.text.trim(),
+        "password": _passwordController.text.trim(),
+      }),
+    );
+
+    final data = jsonDecode(response.body);
+
+    if (response.statusCode == 200 && data["success"] == true) {
+      // Save JWT token
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString("token", data["data"]["token"]);
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const HomeScreen(),
+        ),
+      );
+    } else {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(data["message"] ?? "Login failed"),
+        ),
+      );
+    }
+  } catch (e) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Cannot connect to backend: $e"),
+      ),
+    );
+  }
 }
 
   void _handleGoogleSignIn() {

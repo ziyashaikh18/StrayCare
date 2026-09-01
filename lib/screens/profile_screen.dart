@@ -16,7 +16,7 @@ class ProfileScreen extends StatelessWidget {
   const ProfileScreen({
     super.key,
     this.userName = 'Ziya Shaikh',
-    this.userEmail = 'ziya.shaikh@email.com',
+    this.userEmail = 'ziya.shaikh182650@gmail.com',
     this.userPhone = '+91 98765 43210',
     this.userLocation = 'Bandra, Mumbai, India',
     this.userBadge = 'Rescuer',

@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'notification_screen.dart';
 
 /// StrayCare "AI Analysis & Priority" screen — runs AFTER the report form
@@ -88,6 +91,10 @@ class AiAnalysisResult {
 
 class _AiAnalysisScreenState extends State<AiAnalysisScreen>
     with SingleTickerProviderStateMixin {
+  // Same convention used in report_screen.dart / login_screen.dart — keep
+  // this in sync with your machine's current LAN IP.
+  static const String _apiBaseUrl = 'http://10.250.236.99:5000';
+
   static const Color kBackground = Color(0xFFF8F2FA);
   static const Color kDeepPurple = Color(0xFF2E1A47);
   static const Color kPurple = Color(0xFF6A3EA1);
@@ -102,6 +109,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
   late final AnimationController _gaugeController;
   bool _analyzing = true;
   AiAnalysisResult? _result;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -121,122 +129,153 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
     super.dispose();
   }
 
-  // ───────────────────────── Analysis (replace with real model/API call) ─────
+  // ───────────────────────── Analysis (real backend call) ─────────────
 
   Future<void> _runAnalysis() async {
-    // TODO: Replace with a real call — upload widget.photos.first to your
-    // computer-vision model, run NLP on the description/behavior fields,
-    // and check for duplicates against recent reports in your backend.
-    // Map the response into an AiAnalysisResult below.
-    await Future.delayed(const Duration(milliseconds: 1600));
-
-    final result = _computeHeuristicResult();
-
-    if (!mounted) return;
-
     setState(() {
-      _result = result;
-      _analyzing = false;
+      _analyzing = true;
+      _errorMessage = null;
     });
 
-    _gaugeController.forward(from: 0);
+    try {
+      if (widget.photos.isEmpty) {
+        throw Exception('No photo was provided for analysis.');
+      }
+
+      final preferences = await SharedPreferences.getInstance();
+      final token = preferences.getString('token');
+
+      if (token == null || token.isEmpty) {
+        throw Exception('Please log in again before analyzing a report.');
+      }
+
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_apiBaseUrl/api/ai/analyze'),
+      )
+        ..headers['Authorization'] = 'Bearer $token'
+        ..files.add(
+          await http.MultipartFile.fromPath('image', widget.photos.first.path),
+        );
+
+      final streamedResponse = await request.send().timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw Exception(
+              'The AI analysis took too long. Please try again.',
+            ),
+          );
+      final responseBody = await streamedResponse.stream.bytesToString();
+
+      Map<String, dynamic> decoded;
+      try {
+        decoded = jsonDecode(responseBody) as Map<String, dynamic>;
+      } catch (_) {
+        throw Exception('Received an unexpected response from the server.');
+      }
+
+      if (streamedResponse.statusCode < 200 ||
+          streamedResponse.statusCode >= 300 ||
+          decoded['success'] != true) {
+        final message = decoded['message']?.toString() ??
+            'AI analysis failed (status ${streamedResponse.statusCode}).';
+        throw Exception(message);
+      }
+
+      final data = decoded['data'] as Map<String, dynamic>?;
+      if (data == null) {
+        throw Exception('The server response was missing analysis data.');
+      }
+
+      final result = _mapServerResponseToResult(data);
+
+      if (!mounted) return;
+
+      setState(() {
+        _result = result;
+        _analyzing = false;
+      });
+
+      _gaugeController.forward(from: 0);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _analyzing = false;
+        _errorMessage = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
   }
 
-  /// Local heuristic placeholder splitting "image" and "text" analysis,
-  /// used until a real model/API is wired in.
-  AiAnalysisResult _computeHeuristicResult() {
-    // ---- Image analysis (based on condition + photo presence) ----
-    final imageFindings = <String>[];
-    int imageScore = 0;
+  /// Maps the backend's /api/ai/analyze response into the UI's
+  /// AiAnalysisResult shape. The backend returns one unified severity +
+  /// confidence from a single vision model rather than separate
+  /// image/text scores, so both analysis panels reflect the same
+  /// severity — the split in the UI is preserved by showing what the
+  /// model observed visually vs. its written assessment/recommendation.
+  AiAnalysisResult _mapServerResponseToResult(Map<String, dynamic> data) {
+    final animalType = (data['animalType'] as String?)?.trim() ?? '';
+    final injuryType = (data['injuryType'] as String?)?.trim() ?? '';
+    final severityRaw = (data['severity'] as String?) ?? 'Medium';
+    final confidence = _asInt(data['confidence']) ?? 50;
+    final description = (data['description'] as String?)?.trim() ?? '';
+    final suggestion = (data['suggestion'] as String?)?.trim() ?? '';
+    final detectedObjects = (data['detectedObjects'] as List?)
+            ?.map((e) => e.toString())
+            .where((e) => e.trim().isNotEmpty)
+            .toList() ??
+        const <String>[];
 
-    if (widget.photos.isNotEmpty) {
-      switch (widget.condition) {
-        case 'Injured':
-          imageScore += 3;
-          imageFindings.add('Visible wounds detected on face and body.');
-          imageFindings.add('Signs of injury and possible infection.');
-          break;
-        case 'Sick':
-          imageScore += 2;
-          imageFindings.add('Animal appears lethargic in the photo.');
-          break;
-        case 'Weak':
-          imageScore += 3;
-          imageFindings.add('Animal appears unable to move.');
-          break;
-        default:
-          imageScore += 1;
-          imageFindings.add('No obvious visible injury detected.');
-      }
-    } else {
-      imageFindings.add('No photo provided for visual analysis.');
+    final priority = _priorityFromServerSeverity(severityRaw);
+    final score = confidence.clamp(0, 100);
+
+    final imageFindings = <String>[
+      if (description.isNotEmpty) description,
+      ...detectedObjects.map((o) => 'Detected: $o'),
+    ];
+    if (imageFindings.isEmpty) {
+      imageFindings.add('No specific visual details were returned.');
     }
 
-    // ---- Text analysis (based on description + behavior) ----
-    final textFindings = <String>[];
-    int textScore = 0;
-    final desc = widget.description.toLowerCase();
-
-    if (widget.condition == 'Injured') {
-      textScore += 2;
-      textFindings.add('Report mentions injury.');
-    }
-    if (widget.behaviors.contains('Unable to move')) {
-      textScore += 3;
-      textFindings.add('Report indicates animal is unable to move.');
-    }
-    final painWords = ['pain', 'bleed', 'blood', 'wound', 'hit', 'accident'];
-    if (painWords.any(desc.contains)) {
-      textScore += 2;
-      textFindings.add('Description language suggests pain or trauma.');
-    }
-    if (widget.behaviors.contains('Scared')) {
-      textScore += 1;
-      textFindings.add('Animal shows signs of fear or distress.');
-    }
-    if (widget.behaviors.contains('Aggressive')) {
-      textScore += 1;
-      textFindings.add('Animal may be defensive — approach with caution.');
-    }
+    final textFindings = <String>[
+      if (animalType.isNotEmpty) 'AI-detected animal: $animalType',
+      if (injuryType.isNotEmpty) 'AI-detected condition: $injuryType',
+      if (suggestion.isNotEmpty) suggestion,
+    ];
     if (textFindings.isEmpty) {
-      textFindings.add('No urgent keywords detected in the description.');
-    } else {
-      textFindings.add('Indicates urgent help required.');
+      textFindings.add('No additional assessment was returned.');
     }
-
-    final imageSeverity = _severityFromScore(imageScore);
-    final textSeverity = _severityFromScore(textScore);
-
-    final combined = (imageScore * 1.0 + textScore * 1.0);
-    const maxPossible = 11.0; // rough ceiling for normalization
-    final score = (55 + (combined / maxPossible) * 45).clamp(0, 100).round();
-
-    final priority = _priorityFromScore(score);
 
     return AiAnalysisResult(
       priority: priority,
       score: score,
       imageFindings: imageFindings,
-      imageSeverity: imageSeverity,
+      imageSeverity: priority,
       textFindings: textFindings,
-      textSeverity: textSeverity,
-      // TODO: replace with a real backend duplicate-report check.
+      textSeverity: priority,
+      // Duplicate detection isn't part of this endpoint — it runs
+      // separately as part of report creation on the backend.
       duplicateFound: false,
     );
   }
 
-  AiPriority _severityFromScore(int score) {
-    if (score >= 5) return AiPriority.critical;
-    if (score >= 3) return AiPriority.high;
-    if (score >= 1) return AiPriority.medium;
-    return AiPriority.low;
+  int? _asInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.round();
+    return int.tryParse(value.toString());
   }
 
-  AiPriority _priorityFromScore(int score) {
-    if (score >= 80) return AiPriority.critical;
-    if (score >= 60) return AiPriority.high;
-    if (score >= 35) return AiPriority.medium;
-    return AiPriority.low;
+  AiPriority _priorityFromServerSeverity(String severity) {
+    switch (severity.toLowerCase()) {
+      case 'critical':
+        return AiPriority.critical;
+      case 'high':
+        return AiPriority.high;
+      case 'medium':
+        return AiPriority.medium;
+      case 'low':
+      default:
+        return AiPriority.low;
+    }
   }
 
   // ───────────────────────── Priority styling ─────────────────────────
@@ -346,6 +385,10 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
     Navigator.pop(context, _result);
   }
 
+  void _retryAnalysis() {
+    _runAnalysis();
+  }
+
   // ───────────────────────── Build ─────────────────────────
 
   @override
@@ -359,8 +402,11 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
             Expanded(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
-                child:
-                    _analyzing ? _buildAnalyzingState() : _buildResultState(),
+                child: _analyzing
+                    ? _buildAnalyzingState()
+                    : (_errorMessage != null
+                        ? _buildErrorState()
+                        : _buildResultState()),
               ),
             ),
           ],
@@ -495,6 +541,122 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
                 height: 1.4,
                 color: kSubtitleGray,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────── Error state ─────────────────────────
+
+  Widget _buildErrorState() {
+    return Center(
+      key: const ValueKey('error'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: kPink.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.error_outline,
+                color: kPink,
+                size: 32,
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              'Analysis Failed',
+              style: TextStyle(
+                fontSize: 15.5,
+                fontWeight: FontWeight.w800,
+                color: kDeepPurple,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _errorMessage ?? 'Something went wrong. Please try again.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 12.5,
+                height: 1.4,
+                color: kSubtitleGray,
+              ),
+            ),
+            const SizedBox(height: 22),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _editReport,
+                    icon: const Icon(Icons.edit_outlined,
+                        color: kPurple, size: 17),
+                    label: const Text(
+                      'Edit Report',
+                      style: TextStyle(
+                        color: kPurple,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13.5,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: const BorderSide(color: kPurple, width: 1.3),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: _retryAnalysis,
+                      child: Container(
+                        height: 48,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          gradient: const LinearGradient(
+                            colors: [kPink, kPurple],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: kPurple.withValues(alpha: 0.35),
+                              blurRadius: 14,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.refresh, color: Colors.white, size: 18),
+                            SizedBox(width: 6),
+                            Text(
+                              'Retry',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -825,7 +987,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
             child: _AnalysisCard(
               icon: Icons.description_outlined,
               title: 'Text Analysis',
-              subtitle: '(NLP)',
+              subtitle: '(AI Assessment)',
               severityLabel: _severityLabel(result.textSeverity),
               severityColor: _priorityColor(result.textSeverity),
               findings: result.textFindings,
@@ -879,7 +1041,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'Combined analysis of\nimage and report text',
+                  'AI confidence in this\npriority assessment',
                   style: TextStyle(
                     fontSize: 10.5,
                     color: kSubtitleGray,
@@ -986,7 +1148,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'We compared this report\nwith recent reports.',
+                  'Checked when the report\nis submitted.',
                   style: TextStyle(
                     fontSize: 10.5,
                     color: kSubtitleGray,
@@ -1017,7 +1179,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'This report appears\nto be unique.',
+                  'Final check happens\non submission.',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     fontSize: 10,

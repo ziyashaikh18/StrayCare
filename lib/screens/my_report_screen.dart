@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:straycare_splash/screens/profile_screen.dart';
 import 'package:straycare_splash/screens/report_screen.dart';

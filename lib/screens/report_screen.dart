@@ -1,14 +1,20 @@
 import 'dart:io';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_dragmarker/flutter_map_dragmarker.dart';
+import 'package:latlong2/latlong.dart';
 
 import 'package:straycare_splash/screens/ai_analysis_screen.dart';
 import 'package:straycare_splash/screens/profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:straycare_splash/screens/ai_scanner_screen.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
 import 'package:straycare_splash/screens/my_report_screen.dart';
 import 'package:straycare_splash/screens/report_submitted_screen.dart';
-
 
 /// StrayCare "Report a Rescue" screen — step 1 of 4.
 class ReportRescueScreen extends StatefulWidget {
@@ -19,6 +25,13 @@ class ReportRescueScreen extends StatefulWidget {
 }
 
 class _ReportRescueScreenState extends State<ReportRescueScreen> {
+  static const String _apiBaseUrl = 'http://10.250.236.99:5000';
+  static const String _geoapifyApiKey = "fd50f584772e4658b55d68b83c3ea1e8";
+
+  double? _latitude;
+  double? _longitude;
+  bool _isFetchingLocation = false;
+
   static const Color kBackground = Color(0xFFEDE3F5);
   static const Color kDeepPurple = Color(0xFF2E1A47);
   static const Color kPurple = Color(0xFF6A3EA1);
@@ -95,6 +108,8 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
     setState(() {
       _photos.add(result);
     });
+    await _useCurrentLocation();
+    _fillCurrentISTTime();
   }
 
   Future<void> _pickFromGallery() async {
@@ -122,6 +137,9 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
         _photos.addAll(photosToAdd);
       });
 
+      await _useCurrentLocation();
+      _fillCurrentISTTime();
+
       if (selectedPhotos.length > remainingPhotos) {
         _showMessage('Only 5 photos can be uploaded');
       }
@@ -139,60 +157,91 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
 
   // ───────────────────────── Location ─────────────────────────
 
+  void _fillCurrentISTTime() {
+    final istNow =
+        DateTime.now().toUtc().add(const Duration(hours: 5, minutes: 30));
+    setState(() {
+      _foundDate = DateTime(istNow.year, istNow.month, istNow.day);
+      _foundTime = TimeOfDay(hour: istNow.hour, minute: istNow.minute);
+    });
+  }
+
   Future<void> _useCurrentLocation() async {
-    // TODO: Add geolocator integration here.
-    _showMessage('Current location is not connected yet');
+    if (!mounted) return;
+    setState(() => _isFetchingLocation = true);
+
+    try {
+      // Check if GPS is enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        _showMessage("Please enable location services.");
+        return;
+      }
+
+      // Check permission
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _showMessage("Location permission denied.");
+        return;
+      }
+
+      // Get current GPS coordinates
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      _latitude = position.latitude;
+      _longitude = position.longitude;
+
+      final address =
+          await _reverseGeocode(position.latitude, position.longitude);
+      if (address != null) _locationController.text = address;
+    } catch (e) {
+      _showMessage("Location error: $e");
+    } finally {
+      if (mounted) setState(() => _isFetchingLocation = false);
+    }
+  }
+
+  Future<String?> _reverseGeocode(double latitude, double longitude) async {
+    final url = Uri.https('api.geoapify.com', '/v1/geocode/reverse', {
+      'lat': latitude.toString(),
+      'lon': longitude.toString(),
+      'apiKey': _geoapifyApiKey,
+    });
+    final response = await http.get(url);
+    if (response.statusCode != 200) return null;
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final features = data['features'] as List<dynamic>?;
+    if (features == null || features.isEmpty) return null;
+    return ((features.first as Map<String, dynamic>)['properties']
+        as Map<String, dynamic>)['formatted'] as String?;
+  }
+
+  Future<void> _editLocation() async {
+    final initialPoint = LatLng(_latitude ?? 19.0760, _longitude ?? 72.8777);
+    final selected = await Navigator.push<_PickedLocation>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _LocationPickerScreen(initialPoint: initialPoint),
+      ),
+    );
+    if (selected == null || !mounted) return;
+
+    setState(() {
+      _latitude = selected.latitude;
+      _longitude = selected.longitude;
+      _locationController.text = selected.address;
+    });
   }
 
   // ───────────────────────── Date and time ─────────────────────────
-
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _foundDate,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: kPurple,
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _foundDate = picked;
-      });
-    }
-  }
-
-  Future<void> _pickTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: _foundTime,
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: kPurple,
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _foundTime = picked;
-      });
-    }
-  }
 
   // ───────────────────────── Submit ─────────────────────────
 
@@ -225,35 +274,79 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
     _submitReport(result);
   }
 
-  void _submitReport(AiAnalysisResult result) {
-    final reportId = _generateReportId();
+  Future<void> _submitReport(AiAnalysisResult result) async {
+    final preferences = await SharedPreferences.getInstance();
+    final token = preferences.getString('token');
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ReportSubmittedScreen(
-          reportId: reportId,
-          animalType: _animalType == 'Other' && _otherAnimalController.text.isNotEmpty
-              ? _otherAnimalController.text
-              : _animalType,
-          location: _locationController.text,
-          submittedAt: DateTime.now(),
-          photoPath: _photos.first.path,
-          priorityLabel: result.priority.name,
-          // TODO: if AiAnalysisResult exposes a numeric urgency score,
-          // pass it here instead, e.g. priorityScore: result.score.
+    if (token == null || token.isEmpty) {
+      _showMessage('Please log in before submitting a report');
+      return;
+    }
+
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_apiBaseUrl/api/reports'),
+      )
+        ..headers['Authorization'] = 'Bearer $token'
+        ..fields['animalType'] =
+            _animalType == 'Other'
+                ? _otherAnimalController.text.trim()
+                : _animalType
+        ..fields['injuryType'] = _condition
+        ..fields['severity'] = switch (result.priority.name.toLowerCase()) {
+          'low' => 'Low',
+          'medium' => 'Medium',
+          'high' => 'High',
+          'critical' => 'Critical',
+          _ => 'Medium',
+        };
+
+      request.fields['description'] = _descriptionController.text;
+      request.fields['location'] = _locationController.text.trim();
+      request.fields['latitude'] = _latitude?.toString() ?? '';
+      request.fields['longitude'] = _longitude?.toString() ?? '';
+
+      request.files.add(
+        await http.MultipartFile.fromPath('image', _photos.first.path),
+      );
+
+      final response = await request.send();
+      final responseBody = await response.stream.bytesToString();
+      final data = jsonDecode(responseBody) as Map<String, dynamic>;
+      final report = (data['data'] as Map<String, dynamic>?)?['report']
+          as Map<String, dynamic>?;
+      final reportId = report?['id']?.toString();
+
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          reportId == null) {
+        _showMessage(data['message']?.toString() ?? 'Could not submit report');
+        return;
+      }
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ReportSubmittedScreen(
+            reportId: reportId,
+            animalType:
+                _animalType == 'Other'
+                    ? _otherAnimalController.text.trim()
+                    : _animalType,
+            location: _locationController.text,
+            submittedAt: DateTime.now(),
+            photoPath: _photos.first.path,
+            priorityLabel: result.priority.name,
+          ),
         ),
-      ),
-    );
-  }
-
-  String _generateReportId() {
-    final now = DateTime.now();
-    final yy = (now.year % 100).toString().padLeft(2, '0');
-    final mm = now.month.toString().padLeft(2, '0');
-    final dd = now.day.toString().padLeft(2, '0');
-    final suffix = (now.millisecondsSinceEpoch % 10000).toString().padLeft(4, '0');
-    return 'SC-$yy$mm$dd-$suffix';
+      );
+    } catch (error) {
+      debugPrint('Report submission error: $error');
+      _showMessage('Failed to submit report');
+    }
   }
 
   void _showMessage(String message) {
@@ -290,12 +383,12 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
     }
 
     if (index == 3) {
-  Navigator.push(
-    context,
-    MaterialPageRoute(builder: (context) => const MyReportsScreen()),
-  );
-  return;
-}
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const MyReportsScreen()),
+      );
+      return;
+    }
 
     if (index == 4) {
       Navigator.push(
@@ -771,12 +864,25 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
                     ),
                   ),
                 ),
-                _CircleIconButton(
-                  icon: Icons.my_location,
-                  onTap: _useCurrentLocation,
-                  size: 32,
-                  margin: const EdgeInsets.all(4),
-                ),
+                if (_isFetchingLocation)
+                  const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  IconButton(
+                    onPressed: _editLocation,
+                    icon: const Icon(
+                      Icons.my_location,
+                      color: kPurple,
+                      size: 22,
+                    ),
+                    tooltip: 'Edit Location',
+                  ),
               ],
             ),
           ),
@@ -905,13 +1011,11 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
                   _DropdownField(
                     icon: Icons.calendar_today_outlined,
                     label: _formattedDate,
-                    onTap: _pickDate,
                   ),
                   const SizedBox(height: 8),
                   _DropdownField(
                     icon: Icons.access_time,
                     label: _formattedTime,
-                    onTap: _pickTime,
                   ),
                 ],
               ),
@@ -1253,9 +1357,7 @@ class _CircleIconButton extends StatelessWidget {
   const _CircleIconButton({
     required this.icon,
     required this.onTap,
-    this.size = 40,
-    this.margin,
-  }) : filled = false;
+  }) : size = 40, margin = null, filled = false;
 
   final IconData icon;
   final VoidCallback onTap;
@@ -1464,12 +1566,10 @@ class _DropdownField extends StatelessWidget {
   const _DropdownField({
     required this.icon,
     required this.label,
-    required this.onTap,
   });
 
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
 
   static const Color kDeepPurple = Color(0xFF2E1A47);
   static const Color kSubtitleGray = Color(0xFF8D8398);
@@ -1477,43 +1577,160 @@ class _DropdownField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 8,
-          vertical: 10,
-        ),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: kBorderPurple),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 13,
-              color: kSubtitleGray,
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 11.5,
-                  color: kDeepPurple,
-                ),
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 10,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorderPurple),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 13,
+            color: kSubtitleGray,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11.5,
+                color: kDeepPurple,
               ),
             ),
-            const Icon(
-              Icons.keyboard_arrow_down,
-              size: 15,
-              color: kSubtitleGray,
-            ),
-          ],
+          ),
+          const Icon(
+            Icons.keyboard_arrow_down,
+            size: 15,
+            color: kSubtitleGray,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PickedLocation {
+  const _PickedLocation({
+    required this.latitude,
+    required this.longitude,
+    required this.address,
+  });
+
+  final double latitude;
+  final double longitude;
+  final String address;
+}
+
+class _LocationPickerScreen extends StatefulWidget {
+  const _LocationPickerScreen({required this.initialPoint});
+
+  final LatLng initialPoint;
+
+  @override
+  State<_LocationPickerScreen> createState() => _LocationPickerScreenState();
+}
+
+class _LocationPickerScreenState extends State<_LocationPickerScreen> {
+  LatLng? _selectedPoint;
+  bool _isLoading = false;
+
+  LatLng get _point => _selectedPoint ?? widget.initialPoint;
+
+  Future<void> _confirmLocation() async {
+    setState(() => _isLoading = true);
+    try {
+      final url = Uri.https(
+        'api.geoapify.com',
+        '/v1/geocode/reverse',
+        {
+          'lat': _point.latitude.toString(),
+          'lon': _point.longitude.toString(),
+          'apiKey': _ReportRescueScreenState._geoapifyApiKey,
+        },
+      );
+      final response = await http.get(url);
+      if (response.statusCode != 200) {
+        throw Exception('Could not fetch address');
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final features = data['features'] as List<dynamic>?;
+      final properties = features?.isNotEmpty == true
+          ? (features!.first as Map<String, dynamic>)['properties']
+              as Map<String, dynamic>
+          : null;
+      final address = properties?['formatted'] as String?;
+      if (address == null || address.isEmpty) {
+        throw Exception('Address not found');
+      }
+      if (!mounted) return;
+      Navigator.pop(
+        context,
+        _PickedLocation(
+          latitude: _point.latitude,
+          longitude: _point.longitude,
+          address: address,
         ),
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not fetch this address')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Edit Location'),
+        actions: [
+          TextButton(
+            onPressed: _isLoading ? null : _confirmLocation,
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          FlutterMap(
+            options: MapOptions(
+              initialCenter: _point,
+              initialZoom: 15,
+              onTap: (_, point) => setState(() => _selectedPoint = point),
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.straycare.straycare_splash',
+              ),
+              DragMarkers(
+                markers: [
+                  DragMarker(
+                    point: _point,
+                    size: const Size(60, 60),
+                    builder: (_, __, ___) => const Icon(
+                      Icons.location_pin,
+                      color: Colors.red,
+                      size: 48,
+                    ),
+                    onDragUpdate: (_, point) =>
+                        setState(() => _selectedPoint = point),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          if (_isLoading) const Center(child: CircularProgressIndicator()),
+        ],
       ),
     );
   }
