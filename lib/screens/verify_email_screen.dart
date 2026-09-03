@@ -1,43 +1,115 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/api_config.dart';
+import 'admin_home_screen.dart';
 import 'home_screen.dart';
+import 'login_screen.dart';
+import 'ngo_home_screen.dart';
 
-class VerifyEmailScreen extends StatelessWidget {
-  const VerifyEmailScreen({
-    super.key,
-    required this.email,
-  });
+class VerifyEmailScreen extends StatefulWidget {
+  const VerifyEmailScreen({super.key, required this.email});
 
   final String email;
 
-  static const Color kBackground = Color(0xFFF7EEF9);
-  static const Color kDeepPurple = Color(0xFF3E1E68);
-  static const Color kPurple = Color(0xFF7D4BB6);
-  static const Color kSubtitleGray = Color(0xFF8E849B);
-  static const Color kBorder = Color(0xFFE9DFF3);
+  @override
+  State<VerifyEmailScreen> createState() => _VerifyEmailScreenState();
+}
 
-  void _showMessage(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
+  final _codeController = TextEditingController();
+  bool _isSubmitting = false;
+  bool _isResending = false;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
   }
 
-  void _goToHome(BuildContext context) {
-    // Temporary frontend-only navigation.
-    // Replace this with real Firebase verification logic later.
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const HomeScreen(),
-      ),
-      (route) => false,
-    );
+  Future<void> _verify() async {
+    final code = _codeController.text.trim();
+    if (code.isEmpty) {
+      _message('Enter the verification code.');
+      return;
+    }
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/api/auth/verify-email'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': widget.email, 'code': code}),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      final data = jsonDecode(response.body);
+      if (response.statusCode != 200 || data['success'] != true) {
+        _message(data['message']?.toString() ?? 'Verification failed.');
+        return;
+      }
+
+      final token = data['data']?['token']?.toString();
+      final role = data['data']?['user']?['role']?.toString();
+      if (token == null || role == null) {
+        _message('Verification succeeded, but the session was incomplete.');
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('token', token);
+      await prefs.setString('role', role);
+      _message('Email verified successfully.');
+      if (!mounted) return;
+      final Widget next = role == 'admin'
+          ? const AdminHomeScreen()
+          : role == 'ngo'
+              ? const NgoHomeScreen()
+              : const HomeScreen();
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => next),
+        (_) => false,
+      );
+    } on Exception catch (error) {
+      if (mounted) _message('Unable to verify email: $error');
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  Future<void> _resend() async {
+    if (_isResending) return;
+    setState(() => _isResending = true);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/api/auth/resend-verification'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': widget.email}),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      final data = jsonDecode(response.body);
+      _message(data['message']?.toString() ?? 'Could not resend code.');
+    } on Exception catch (error) {
+      if (mounted) _message('Unable to resend code: $error');
+    } finally {
+      if (mounted) setState(() => _isResending = false);
+    }
+  }
+
+  void _message(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBackground,
+      backgroundColor: const Color(0xFFF7EEF9),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -49,221 +121,53 @@ class VerifyEmailScreen extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: const Color(0xFFFBF8FD),
                   borderRadius: BorderRadius.circular(34),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.deepPurple.withValues(alpha: 0.08),
-                      blurRadius: 30,
-                      offset: const Offset(0, 10),
-                    ),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x14000000), blurRadius: 30, offset: Offset(0, 10)),
                   ],
                 ),
                 child: Column(
                   children: [
                     Align(
                       alignment: Alignment.topLeft,
-                      child: _BackButton(
-                        onTap: () => Navigator.pop(context),
+                      child: IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.arrow_back, color: Color(0xFF7D4BB6)),
                       ),
                     ),
-
-                    const SizedBox(height: 32),
-
-                    Container(
-                      width: 150,
-                      height: 150,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: const Color(0xFFEAF8E4),
-                        border: Border.all(
-                          color: const Color(0xFFD5F0C8),
-                          width: 18,
-                        ),
-                      ),
-                      child: Container(
-                        margin: const EdgeInsets.all(20),
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.mark_email_read_rounded,
-                          size: 70,
-                          color: Color(0xFF55C765),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 28),
-
-                    const Text(
-                      'Verify Your Email',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 25,
-                        fontWeight: FontWeight.w700,
-                        color: kDeepPurple,
-                      ),
-                    ),
-
+                    const SizedBox(height: 20),
+                    const Icon(Icons.mark_email_read_rounded, size: 88, color: Color(0xFF55C765)),
+                    const SizedBox(height: 24),
+                    const Text('Verify Your Email', style: TextStyle(fontSize: 25, fontWeight: FontWeight.w700, color: Color(0xFF3E1E68))),
                     const SizedBox(height: 12),
-
-                    const Text(
-                      'We sent a verification link to your email address.',
+                    Text('Enter the verification code sent to ${widget.email}.', textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, color: Color(0xFF8E849B), height: 1.5)),
+                    const SizedBox(height: 24),
+                    TextField(
+                      controller: _codeController,
+                      keyboardType: TextInputType.number,
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: kSubtitleGray,
-                        height: 1.5,
+                      decoration: InputDecoration(
+                        labelText: 'Verification Code',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                     ),
-
-                    const SizedBox(height: 22),
-
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: kBorder),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.mail_outline,
-                            color: kPurple,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              email,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: kDeepPurple,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8F0FC),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: const Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(
-                            Icons.info_outline,
-                            color: kPurple,
-                          ),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'This is currently a UI preview. '
-                              'Email verification will be connected when Firebase is added.',
-                              style: TextStyle(
-                                color: kSubtitleGray,
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
+                    const SizedBox(height: 20),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: () => _goToHome(context),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: kPurple,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 17),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                        ),
-                        child: const Text(
-                          'I Have Verified My Email',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+                        onPressed: _isSubmitting ? null : _verify,
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7D4BB6), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 17), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18))),
+                        child: Text(_isSubmitting ? 'Verifying...' : 'Verify Email'),
                       ),
                     ),
-
-                    const SizedBox(height: 16),
-
                     TextButton(
-                      onPressed: () {
-                        _showMessage(
-                          context,
-                          'Resend email will work after Firebase is connected.',
-                        );
-                      },
-                      child: const Text(
-                        'Resend Verification Email',
-                        style: TextStyle(
-                          color: kPurple,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
+                      onPressed: _isResending ? null : _resend,
+                      child: Text(_isResending ? 'Resending...' : 'Resend Verification Code', style: const TextStyle(color: Color(0xFF7D4BB6), fontWeight: FontWeight.w700)),
                     ),
-
-                    const SizedBox(height: 8),
-
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text(
-                        'Use a different email',
-                        style: TextStyle(color: kSubtitleGray),
-                      ),
-                    ),
+                    TextButton(onPressed: () => Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginScreen()), (_) => false), child: const Text('Use a different email', style: TextStyle(color: Color(0xFF8E849B)))),
                   ],
                 ),
               ),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BackButton extends StatelessWidget {
-  const _BackButton({
-    required this.onTap,
-  });
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      elevation: 4,
-      shadowColor: Colors.black12,
-      shape: const CircleBorder(),
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: const Padding(
-          padding: EdgeInsets.all(12),
-          child: Icon(
-            Icons.arrow_back,
-            color: Color(0xFF7D4BB6),
-            size: 22,
           ),
         ),
       ),

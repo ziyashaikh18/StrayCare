@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   createRequest,
+  getMyStatus,
   listRequests,
   approveRequest,
   rejectRequest,
@@ -11,6 +12,7 @@ const router = express.Router();
 
 router.use(protect);
 router.post('/', createRequest);
+router.get('/my-status', getMyStatus);
 router.get('/', requireRole('admin'), listRequests);
 router.patch('/:id/approve', requireRole('admin'), approveRequest);
 router.patch('/:id/reject', requireRole('admin'), rejectRequest);

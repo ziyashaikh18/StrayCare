@@ -18,6 +18,14 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    organizationName: {
+      type: String,
+      trim: true,
+    },
+    address: {
+      type: String,
+      trim: true,
+    },
     passwordHash: {
       type: String,
       required: [true, 'Password is required'],

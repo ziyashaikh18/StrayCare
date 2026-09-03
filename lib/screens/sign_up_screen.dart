@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'verify_email_screen.dart';
+import '../config/api_config.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/primary_gradient_button.dart';
 import '../widgets/social_login_button.dart';
@@ -27,6 +30,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   // State Variables
   //========================
   bool _isTermsAccepted = false;
+  bool _isSubmitting = false;
 
   //========================
   // App Colors
@@ -59,7 +63,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
   //========================
   // Button Actions
   //========================
-  void _handleSignUp() {
+  Future<void> _handleSignUp() async {
+  if (_isSubmitting) return;
   final name = _nameController.text.trim();
   final email = _emailController.text.trim();
   final phone = _phoneController.text.trim();
@@ -90,13 +95,35 @@ class _SignUpScreenState extends State<SignUpScreen> {
     return;
   }
 
-  // Temporary frontend-only flow.
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => VerifyEmailScreen(email: email),
-    ),
-  );
+  setState(() => _isSubmitting = true);
+  try {
+    final response = await http
+        .post(
+          Uri.parse('${ApiConfig.baseUrl}/api/auth/register'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'name': name,
+            'email': email,
+            'phone': phone,
+            'password': password,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (!mounted) return;
+    final data = jsonDecode(response.body);
+    if (response.statusCode == 201 && data['success'] == true) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => VerifyEmailScreen(email: email)),
+      );
+    } else {
+      _showMessage(data['message']?.toString() ?? 'Unable to create account.');
+    }
+  } on Exception catch (error) {
+    if (mounted) _showMessage('Unable to create account: $error');
+  } finally {
+    if (mounted) setState(() => _isSubmitting = false);
+  }
 }
 
 void _showMessage(String message) {
@@ -413,7 +440,7 @@ void _showPrivacyDialog() {
 
                           PrimaryGradientButton(
                             label: 'Sign Up',
-                            onPressed: _handleSignUp,
+                            onPressed: _isSubmitting ? () {} : _handleSignUp,
                           ),
 
                           const SizedBox(height: 20),

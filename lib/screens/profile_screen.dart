@@ -5,6 +5,7 @@ import 'package:straycare_splash/screens/ai_scanner_screen.dart';
 import 'package:straycare_splash/screens/help_support_screen.dart';
 import 'package:straycare_splash/screens/home_screen.dart';
 import 'package:straycare_splash/screens/login_screen.dart';
+import 'package:straycare_splash/screens/ngo_home_screen.dart';
 import 'package:straycare_splash/screens/my_activity_screen.dart';
 import 'package:straycare_splash/screens/my_report_screen.dart';
 import 'package:straycare_splash/screens/notification_screen.dart';
@@ -224,6 +225,30 @@ class ProfileScreen extends StatelessWidget {
                 onLogOut: () => _confirmLogOut(context),
               ),
 
+              FutureBuilder<SharedPreferences>(
+                future: SharedPreferences.getInstance(),
+                builder: (context, snapshot) {
+                  final prefs = snapshot.data;
+                  final isApprovedNgo = prefs?.getString('role') == 'ngo' ||
+                      prefs?.getString('partner_status') == 'approved';
+                  if (!isApprovedNgo) return const SizedBox.shrink();
+
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 16),
+                    child: _ModeSwitchCard(
+                      title: 'Switch to NGO Dashboard',
+                      subtitle: 'Open your rescue operations workspace',
+                      onTap: () => Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(
+                          builder: (_) => const NgoHomeScreen(),
+                        ),
+                        (route) => route.isFirst,
+                      ),
+                    ),
+                  );
+                },
+              ),
+
               const SizedBox(height: 16),
               const _ImpactBanner(),
             ],
@@ -282,6 +307,62 @@ class ProfileScreen extends StatelessWidget {
       case 4:
         break;
     }
+  }
+}
+
+class _ModeSwitchCard extends StatelessWidget {
+  const _ModeSwitchCard({
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFF1E7F7),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              const Icon(Icons.swap_horiz, color: ProfileScreen.kPurple),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: ProfileScreen.kDeepPurple,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: ProfileScreen.kSubtitleGray,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: ProfileScreen.kPurple),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

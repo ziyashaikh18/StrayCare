@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'help_support_screen.dart';
+import 'home_screen.dart';
 import 'login_screen.dart';
 import 'notification_screen.dart';
 
@@ -36,6 +37,7 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
   int _inReview = 0;
   int _resolved = 0;
   bool _loadingStats = true;
+  bool _isNgo = false;
 
   @override
   void initState() {
@@ -51,9 +53,13 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
       _name = prefs.getString('user_name') ?? _name;
       _email = prefs.getString('user_email') ?? _email;
       _phone = prefs.getString('user_phone') ?? _phone;
-      _location = prefs.getString('user_location') ?? _location;
+        _location = prefs.getString('user_address') ??
+          prefs.getString('user_location') ??
+          _location;
       _role = (prefs.getString('role') ?? 'ngo').toUpperCase();
-      _organization = prefs.getString('organization') ?? _organization;
+        _organization =
+          prefs.getString('organizationName') ?? _organization;
+        _isNgo = prefs.getString('role') == 'ngo';
     });
 
     await _loadStatistics(prefs.getString('token') ?? '');
@@ -107,7 +113,9 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
     await prefs.remove('user_email');
     await prefs.remove('user_phone');
     await prefs.remove('user_location');
-    await prefs.remove('organization');
+    await prefs.remove('organizationName');
+    await prefs.remove('user_address');
+    await prefs.remove('partner_status');
 
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -198,6 +206,12 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
                 onHelp: _openHelpSupport,
                 onSettings: () => _showUnavailable('Settings are not configured yet.'),
                 onLogout: _openLogoutConfirmation,
+                onSwitchToCitizen: _isNgo
+                  ? () => Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const HomeScreen()),
+                      (route) => route.isFirst,
+                    )
+                  : null,
               ),
             ],
           ),
@@ -501,12 +515,13 @@ class _InfoCard extends StatelessWidget {
 }
 
 class _ActionCard extends StatelessWidget {
-  const _ActionCard({required this.onNotifications, required this.onHelp, required this.onSettings, required this.onLogout});
+  const _ActionCard({required this.onNotifications, required this.onHelp, required this.onSettings, required this.onLogout, this.onSwitchToCitizen});
 
   final VoidCallback onNotifications;
   final VoidCallback onHelp;
   final VoidCallback onSettings;
   final VoidCallback onLogout;
+  final VoidCallback? onSwitchToCitizen;
 
   @override
   Widget build(BuildContext context) {
@@ -520,6 +535,10 @@ class _ActionCard extends StatelessWidget {
       ),
       child: Column(
         children: [
+          if (onSwitchToCitizen != null) ...[
+            _Action(icon: Icons.swap_horiz, title: 'Switch to Citizen Mode', subtitle: 'Open the normal reporter experience', onTap: onSwitchToCitizen!),
+            const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
+          ],
           _Action(icon: Icons.notifications_none_rounded, title: 'Notifications', subtitle: 'Manage operations alerts', onTap: onNotifications),
           const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
           _Action(icon: Icons.help_outline_rounded, title: 'Help & Support', subtitle: 'Find rescue operations help', onTap: onHelp),

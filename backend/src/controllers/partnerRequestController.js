@@ -45,6 +45,33 @@ const createRequest = async (req, res, next) => {
   }
 };
 
+const getMyStatus = async (req, res, next) => {
+  try {
+    const request = await PartnerRequest.findOne({ user: req.user._id })
+      .sort({ createdAt: -1 });
+
+    if (!request) {
+      return res.json({ success: true, data: { request: null } });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        request: {
+          id: request._id,
+          organizationName: request.organizationName,
+          status: request.status,
+          rejectionReason: request.rejectionReason ?? null,
+          createdAt: request.createdAt,
+          updatedAt: request.updatedAt,
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const listRequests = async (req, res, next) => {
   try {
     const filter = req.query.status ? { status: req.query.status } : {};
@@ -75,6 +102,13 @@ const reviewRequest = (status) => async (req, res, next) => {
     await User.findByIdAndUpdate(request.user, {
       role: status === 'approved' ? 'ngo' : 'reporter',
       partnerStatus: status,
+      ...(status === 'approved'
+        ? {
+            organizationName: request.organizationName,
+            phone: request.phone,
+            address: request.address,
+          }
+        : {}),
     });
 
     res.json({ success: true, data: { request: toResponse(request) } });
@@ -85,6 +119,7 @@ const reviewRequest = (status) => async (req, res, next) => {
 
 module.exports = {
   createRequest,
+  getMyStatus,
   listRequests,
   approveRequest: reviewRequest('approved'),
   rejectRequest: reviewRequest('rejected'),

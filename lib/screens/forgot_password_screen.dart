@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
+import '../config/api_config.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/bottom_wave_clipper.dart';
 import '../widgets/primary_gradient_button.dart';
+import 'reset_password_screen.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -13,6 +17,7 @@ class ForgotPasswordScreen extends StatefulWidget {
 
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final TextEditingController _emailController = TextEditingController();
+  bool _isSubmitting = false;
 
   static const Color kBackground = Color(0xFFF8F2FA);
   static const Color kDeepPurple = Color(0xFF2E1A47);
@@ -26,8 +31,39 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     super.dispose();
   }
 
-  void _sendResetLink() {
-    // TODO: Implement password reset
+  Future<void> _sendResetLink() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      _message('Enter your email address.');
+      return;
+    }
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/api/auth/forgot-password'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': email}),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        _message(data['message']?.toString() ?? 'Reset code requested.');
+        Navigator.push(context, MaterialPageRoute(builder: (_) => ResetPasswordScreen(email: email)));
+      } else {
+        _message(data['message']?.toString() ?? 'Could not request a reset code.');
+      }
+    } on Exception catch (error) {
+      if (mounted) _message('Unable to request reset code: $error');
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  void _message(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -133,7 +169,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
                         PrimaryGradientButton(
                           label: 'Send Reset Link',
-                          onPressed: _sendResetLink,
+                          onPressed: _isSubmitting ? () {} : _sendResetLink,
                         ),
 
                         const SizedBox(height: 24),

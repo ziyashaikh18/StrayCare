@@ -16,6 +16,8 @@ const toPublicUser = (user) => ({
   name: user.name,
   email: user.email,
   phone: user.phone,
+  organizationName: user.organizationName,
+  address: user.address,
   role: user.role,
   partnerStatus: user.partnerStatus,
   isEmailVerified: user.isEmailVerified,

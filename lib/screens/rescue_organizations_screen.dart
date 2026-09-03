@@ -997,61 +997,61 @@ class _RescueOrganizationsScreenState
           width: 1,
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '🐶🐱',
-            style: TextStyle(fontSize: 22),
-          ),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "Can't find what you're looking for?",
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                    color: kDeepPurple,
-                  ),
+          const Row(
+            children: [
+              Text('🐶🐱', style: TextStyle(fontSize: 22)),
+              SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Want to work with StrayCare?',
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                        color: kDeepPurple,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Join our rescue partner network.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF8D8398),
+                      ),
+                    ),
+                  ],
                 ),
-                SizedBox(height: 2),
-                Text(
-                  'Help us connect you with more organizations.',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    color: Color(0xFF8D8398),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          ElevatedButton(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const PartnerRequestFormScreen(),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const PartnerRequestFormScreen(),
+                ),
               ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: kAccentPurple,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+              icon: const Icon(Icons.add_business_outlined, size: 18),
+              label: const Text(
+                'Become a Rescue Partner',
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
               ),
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 10,
-              ),
-            ),
-            child: const Text(
-              'Become a Rescue Partner',
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kAccentPurple,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 12),
               ),
             ),
           ),

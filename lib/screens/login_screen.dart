@@ -11,6 +11,7 @@ import '../widgets/social_login_button.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/api_config.dart';
 
 /// StrayCare login screen: back button, logo/wordmark, welcome copy,
 /// email + password fields, forgot-password link, login button, social
@@ -43,10 +44,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _handleLogin() async {
   try {
-    const String apiBaseUrl = "http://10.250.236.99:5000";
-
     final response = await http.post(
-      Uri.parse("$apiBaseUrl/api/auth/login"),
+      Uri.parse("${ApiConfig.baseUrl}/api/auth/login"),
       headers: {
         "Content-Type": "application/json",
       },
@@ -74,7 +73,8 @@ class _LoginScreenState extends State<LoginScreen> {
           "user_email": user["email"]?.toString() ?? "",
           "user_phone": user["phone"]?.toString() ?? "",
           "user_location": user["location"]?.toString() ?? "",
-          "organization": user["organization"]?.toString() ?? "",
+          "organizationName": user["organizationName"]?.toString() ?? "",
+          "user_address": user["address"]?.toString() ?? "",
           "partner_status": user["partnerStatus"]?.toString() ?? "",
         };
         for (final entry in userFields.entries) {
