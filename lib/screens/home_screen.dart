@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:straycare_splash/screens/ai_analysis_loading_screen.dart';
 import 'package:straycare_splash/screens/ai_scanner_screen.dart';
@@ -10,6 +13,8 @@ import 'package:straycare_splash/screens/profile_screen.dart';
 import 'package:straycare_splash/screens/report_screen.dart';
 import 'package:straycare_splash/screens/rescue_organizations_screen.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
+import 'package:straycare_splash/config/api_config.dart';
+import 'dart:convert';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -25,10 +30,51 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _navIndex = 0;
+  List<_UrgentCaseData> _realUrgentCases = [];
 
   static const Color kBackground = Color(0xFFF8F2FA);
   static const Color kDeepPurple = Color(0xFF2E1A47);
   static const Color kCardBorder = Color(0xFFD9C7EA);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRealUrgentCases();
+  }
+
+  Future<void> _loadRealUrgentCases() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final token = preferences.getString('token') ?? '';
+      if (token.isEmpty) return;
+
+      var latitude = 19.0760;
+      var longitude = 72.8777;
+      try {
+        if (await Geolocator.isLocationServiceEnabled()) {
+          final permission = await Geolocator.checkPermission();
+          if (permission == LocationPermission.always ||
+              permission == LocationPermission.whileInUse) {
+            final position = await Geolocator.getCurrentPosition();
+            latitude = position.latitude;
+            longitude = position.longitude;
+          }
+        }
+      } catch (_) {}
+
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/reports/nearby?lat=$latitude&lng=$longitude&radiusKm=50'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) return;
+      final reports = (jsonDecode(response.body)['data']['reports'] as List)
+          .where((report) => report['severity'] == 'Critical' || report['severity'] == 'High')
+          .take(3)
+          .map((report) => _UrgentCaseData.fromJson(report))
+          .toList();
+      if (mounted) setState(() => _realUrgentCases = reports);
+    } catch (_) {}
+  }
 
   void _snack(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -229,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onViewAll: _openAllRescueCases,
             ),
             const SizedBox(height: 10),
-            const _UrgentCasesBox(),
+            _UrgentCasesBox(realCases: _realUrgentCases),
           ],
         ),
       ),
@@ -768,13 +814,15 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _UrgentCasesBox extends StatelessWidget {
-  const _UrgentCasesBox();
+  const _UrgentCasesBox({required this.realCases});
+
+  final List<_UrgentCaseData> realCases;
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       children: [
-        _RescueCaseRow(
+        const _RescueCaseRow(
           title: 'Injured Dog',
           badgeLabel: 'Critical',
           badgeColor: Color(0xFFE0426B),
@@ -784,14 +832,14 @@ class _UrgentCasesBox extends StatelessWidget {
           timeAgo: '12 min ago',
           imagePath: 'assets/images/InjuredDog.jpeg',
         ),
-        Divider(
+        const Divider(
           height: 18,
           thickness: 0.8,
           indent: 8,
           endIndent: 8,
           color: Color(0xFFE9E1EE),
         ),
-        _RescueCaseRow(
+        const _RescueCaseRow(
           title: 'Sick Cat',
           badgeLabel: 'High',
           badgeColor: Color(0xFFE8A23D),
@@ -801,9 +849,62 @@ class _UrgentCasesBox extends StatelessWidget {
           timeAgo: '34 min ago',
           imagePath: 'assets/images/sickcat.jpeg',
         ),
+        for (final realCase in realCases) ...[
+          const Divider(
+            height: 18,
+            thickness: 0.8,
+            indent: 8,
+            endIndent: 8,
+            color: Color(0xFFE9E1EE),
+          ),
+          _RescueCaseRow.fromData(realCase),
+        ],
       ],
     );
   }
+}
+
+class _UrgentCaseData {
+  const _UrgentCaseData({
+    required this.title,
+    required this.badgeLabel,
+    required this.badgeColor,
+    required this.location,
+    required this.description,
+    required this.timeAgo,
+    required this.imageUrl,
+  });
+
+  final String title;
+  final String badgeLabel;
+  final Color badgeColor;
+  final String location;
+  final String description;
+  final String timeAgo;
+  final String? imageUrl;
+
+  factory _UrgentCaseData.fromJson(Map<String, dynamic> json) {
+    final createdAt = DateTime.tryParse(json['createdAt']?.toString() ?? '');
+    final severity = json['severity']?.toString() ?? 'High';
+    return _UrgentCaseData(
+      title: json['animalType']?.toString() ?? 'Animal in need',
+      badgeLabel: severity,
+      badgeColor: severity == 'Critical' ? const Color(0xFFE0426B) : const Color(0xFFE8A23D),
+      location: json['location']?.toString() ?? 'Mumbai',
+      description: json['description']?.toString() ?? 'Urgent rescue case reported nearby.',
+      timeAgo: _timeAgo(createdAt),
+      imageUrl: json['imageUrl']?.toString(),
+    );
+  }
+}
+
+String _timeAgo(DateTime? date) {
+  if (date == null) return 'Recently';
+  final difference = DateTime.now().difference(date.toLocal());
+  if (difference.inMinutes < 1) return 'Just now';
+  if (difference.inHours < 1) return '${difference.inMinutes} min ago';
+  if (difference.inDays < 1) return '${difference.inHours} hr ago';
+  return '${difference.inDays}d ago';
 }
 
 class _RescueCaseRow extends StatelessWidget {
@@ -816,6 +917,7 @@ class _RescueCaseRow extends StatelessWidget {
     required this.description,
     required this.timeAgo,
     required this.imagePath,
+    this.imageUrl,
   });
 
   final String title;
@@ -827,6 +929,22 @@ class _RescueCaseRow extends StatelessWidget {
   final String timeAgo;
   final String imagePath;
 
+  factory _RescueCaseRow.fromData(_UrgentCaseData data) {
+    return _RescueCaseRow(
+      title: data.title,
+      badgeLabel: data.badgeLabel,
+      badgeColor: data.badgeColor,
+      badgeIcon: Icons.warning_amber_rounded,
+      location: data.location,
+      description: data.description,
+      timeAgo: data.timeAgo,
+      imagePath: data.imageUrl ?? 'assets/images/InjuredDog.jpeg',
+      imageUrl: data.imageUrl,
+    );
+  }
+
+  final String? imageUrl;
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -836,7 +954,20 @@ class _RescueCaseRow extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
-            child: Image.asset(
+            child: imageUrl != null && imageUrl!.isNotEmpty
+                ? Image.network(
+                    imageUrl!,
+                    width: 92,
+                    height: 62,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Image.asset(
+                      'assets/images/InjuredDog.jpeg',
+                      width: 92,
+                      height: 62,
+                      fit: BoxFit.cover,
+                    ),
+                  )
+                : Image.asset(
               imagePath,
               width: 92,
               height: 62,

@@ -5,6 +5,7 @@ const authRoutes = require('./authRoutes');
 const reportRoutes = require('./reportRoutes');
 const aiRoutes = require('./aiRoutes');   
 const partnerRequestRoutes = require('./partnerRequestRoutes');
+const notificationRoutes = require('./notificationRoutes');
 const router = express.Router();
 
 // Mount sub-routes
@@ -14,5 +15,6 @@ router.use('/auth', authRoutes);
 router.use('/reports', reportRoutes);
 router.use('/ai', aiRoutes); 
 router.use('/partner-requests', partnerRequestRoutes);
+router.use('/notifications', notificationRoutes);
 
 module.exports = router;

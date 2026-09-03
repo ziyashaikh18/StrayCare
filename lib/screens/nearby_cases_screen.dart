@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:straycare_splash/config/api_config.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
 import 'package:straycare_splash/screens/home_screen.dart';
 import 'package:straycare_splash/screens/report_screen.dart';
@@ -35,6 +40,39 @@ class NearbyCase {
   final int photoCount;
   final AnimalCategory category;
   final bool isFavorite;
+
+  factory NearbyCase.fromReport(Map<String, dynamic> report) {
+    final animalType = report['animalType']?.toString() ?? 'Animal';
+    final severity = report['severity']?.toString() == 'Critical'
+        ? CaseSeverity.critical
+        : CaseSeverity.high;
+    final normalizedType = animalType.toLowerCase();
+    final category = normalizedType.contains('dog')
+        ? AnimalCategory.dog
+        : normalizedType.contains('cat')
+            ? AnimalCategory.cat
+            : AnimalCategory.other;
+    return NearbyCase(
+      title: animalType,
+      severity: severity,
+      location: report['location']?.toString() ?? 'Mumbai',
+      distanceKm: 0,
+      timeAgo: _nearbyTimeAgo(DateTime.tryParse(report['createdAt']?.toString() ?? '')),
+      description: report['description']?.toString() ?? 'Urgent rescue case reported nearby.',
+      imagePath: report['imageUrl']?.toString() ?? 'assets/images/InjuredDog.jpeg',
+      photoCount: 1,
+      category: category,
+    );
+  }
+}
+
+String _nearbyTimeAgo(DateTime? date) {
+  if (date == null) return 'Recently';
+  final difference = DateTime.now().difference(date.toLocal());
+  if (difference.inMinutes < 1) return 'Just now';
+  if (difference.inHours < 1) return '${difference.inMinutes} min ago';
+  if (difference.inDays < 1) return '${difference.inHours} hr ago';
+  return '${difference.inDays}d ago';
 }
 
 /// StrayCare "Nearby Cases" screen matching the design mock:
@@ -87,6 +125,44 @@ class NearbyCasesScreen extends StatefulWidget {
 class _NearbyCasesScreenState extends State<NearbyCasesScreen> {
   AnimalCategory? _selectedCategory; // null = All
   final TextEditingController _searchController = TextEditingController();
+  List<NearbyCase> _realCases = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRealCases();
+  }
+
+  Future<void> _loadRealCases() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final token = preferences.getString('token') ?? '';
+      if (token.isEmpty) return;
+      var latitude = 19.0760;
+      var longitude = 72.8777;
+      try {
+        if (await Geolocator.isLocationServiceEnabled()) {
+          final permission = await Geolocator.checkPermission();
+          if (permission == LocationPermission.always ||
+              permission == LocationPermission.whileInUse) {
+            final position = await Geolocator.getCurrentPosition();
+            latitude = position.latitude;
+            longitude = position.longitude;
+          }
+        }
+      } catch (_) {}
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/reports/nearby?lat=$latitude&lng=$longitude&radiusKm=50'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) return;
+      final reports = (jsonDecode(response.body)['data']['reports'] as List)
+          .where((report) => report['severity'] == 'Critical' || report['severity'] == 'High')
+          .map((report) => NearbyCase.fromReport(report))
+          .toList();
+      if (mounted) setState(() => _realCases = reports);
+    } catch (_) {}
+  }
 
   static const List<NearbyCase> _cases = [
     NearbyCase(
@@ -152,7 +228,7 @@ class _NearbyCasesScreenState extends State<NearbyCasesScreen> {
 
   List<NearbyCase> get _filteredCases {
     final query = _searchController.text.trim().toLowerCase();
-    return _cases.where((c) {
+    return [..._cases, ..._realCases].where((c) {
       final matchesCategory =
           _selectedCategory == null || c.category == _selectedCategory;
       final matchesQuery = query.isEmpty ||
@@ -777,25 +853,22 @@ class _CaseCardState extends State<_CaseCard> {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.asset(
+                  child: nearbyCase.imagePath.startsWith('http')
+                      ? Image.network(
+                          nearbyCase.imagePath,
+                          width: 100,
+                          height: 100,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) =>
+                              _casePlaceholder(),
+                        )
+                      : Image.asset(
                     nearbyCase.imagePath,
                     width: 100,
                     height: 100,
                     fit: BoxFit.cover,
                     errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        width: 100,
-                        height: 100,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF1E7F7),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.pets,
-                          color: NearbyCasesScreen.kPurple,
-                          size: 30,
-                        ),
-                      );
+                      return _casePlaceholder();
                     },
                   ),
                 ),
@@ -973,6 +1046,18 @@ class _CaseCardState extends State<_CaseCard> {
       ),
     );
   }
+}
+
+Widget _casePlaceholder() {
+  return Container(
+    width: 100,
+    height: 100,
+    decoration: BoxDecoration(
+      color: const Color(0xFFF1E7F7),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: const Icon(Icons.pets, color: NearbyCasesScreen.kPurple, size: 30),
+  );
 }
 
 // ───────────────────────── Report banner ─────────────────────────

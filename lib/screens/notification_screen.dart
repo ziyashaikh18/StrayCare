@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:straycare_splash/config/api_config.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
 import 'package:straycare_splash/screens/home_screen.dart';
 import 'package:straycare_splash/screens/report_screen.dart';
@@ -31,6 +35,39 @@ class NotificationItem {
   final IconData? metaIcon;
   final String? metaText;
   final bool isUnread;
+
+  factory NotificationItem.fromJson(Map<String, dynamic> json) {
+    final type = json['type']?.toString() ?? '';
+    final category = type.startsWith('partner_')
+        ? NotificationCategory.updates
+        : NotificationCategory.reports;
+    final isApproved = type == 'partner_approved';
+    return NotificationItem(
+      icon: type == 'report_assigned'
+          ? Icons.assignment_turned_in_outlined
+          : type == 'report_status_changed'
+              ? Icons.description_outlined
+              : isApproved
+                  ? Icons.check_circle_outline
+                  : Icons.warning_amber_rounded,
+      iconColor: isApproved ? const Color(0xFF3FAE5C) : NotificationsScreen.kPurple,
+      iconBg: isApproved ? const Color(0xFFDFF4E4) : const Color(0xFFF1E7F7),
+      title: json['title']?.toString() ?? 'Notification',
+      description: json['message']?.toString() ?? '',
+      timeAgo: _notificationTimeAgo(DateTime.tryParse(json['createdAt']?.toString() ?? '')),
+      category: category,
+      isUnread: json['isRead'] != true,
+    );
+  }
+}
+
+String _notificationTimeAgo(DateTime? date) {
+  if (date == null) return 'Recently';
+  final difference = DateTime.now().difference(date.toLocal());
+  if (difference.inMinutes < 1) return 'Just now';
+  if (difference.inHours < 1) return '${difference.inMinutes}m ago';
+  if (difference.inDays < 1) return '${difference.inHours}h ago';
+  return '${difference.inDays}d ago';
 }
 
 /// StrayCare "Notifications" screen matching the design mock:
@@ -64,6 +101,30 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   NotificationCategory? _selectedFilter; // null = All
+  List<NotificationItem> _realItems = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifications();
+  }
+
+  Future<void> _loadNotifications() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final token = preferences.getString('token') ?? '';
+      if (token.isEmpty) return;
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/notifications'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) return;
+      final notifications = (jsonDecode(response.body)['data']['notifications'] as List)
+          .map((item) => NotificationItem.fromJson(item as Map<String, dynamic>))
+          .toList();
+      if (mounted) setState(() => _realItems = notifications);
+    } catch (_) {}
+  }
 
   static const List<NotificationItem> _items = [
     NotificationItem(
@@ -162,13 +223,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   ];
 
   List<NotificationItem> get _filteredItems {
-    if (_selectedFilter == null) return _items;
-    return _items.where((i) => i.category == _selectedFilter).toList();
+    final items = [..._items, ..._realItems];
+    if (_selectedFilter == null) return items;
+    return items.where((i) => i.category == _selectedFilter).toList();
   }
 
   int _countFor(NotificationCategory? category) {
-    if (category == null) return _items.length;
-    return _items.where((i) => i.category == category).length;
+    final items = [..._items, ..._realItems];
+    if (category == null) return items.length;
+    return items.where((i) => i.category == category).length;
   }
 
   void _handleNavTap(BuildContext context, int index) {
@@ -234,6 +297,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 separatorBuilder: (context, index) =>
                     const SizedBox(height: 10),
                 itemBuilder: (context, index) {
+                  if (_filteredItems.isEmpty) {
+                    return const _EmptyNotificationsState();
+                  }
                   if (index == _filteredItems.length) {
                     return const Padding(
                       padding: EdgeInsets.only(top: 4),
@@ -571,6 +637,27 @@ class _NotificationCard extends StatelessWidget {
                     : const Color(0xFFCBC0D6),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyNotificationsState extends StatelessWidget {
+  const _EmptyNotificationsState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.all(32),
+      child: Column(
+        children: [
+          Icon(Icons.notifications_off_outlined, size: 38, color: NotificationsScreen.kPurple),
+          SizedBox(height: 10),
+          Text(
+            'No notifications yet',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: NotificationsScreen.kDeepPurple),
           ),
         ],
       ),

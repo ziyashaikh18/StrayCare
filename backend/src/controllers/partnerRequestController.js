@@ -1,5 +1,6 @@
 const PartnerRequest = require('../models/PartnerRequest');
 const User = require('../models/User');
+const createNotification = require('../utils/createNotification');
 
 const toResponse = (request) => ({
   id: request._id,
@@ -111,6 +112,23 @@ const reviewRequest = (status) => async (req, res, next) => {
         : {}),
     });
 
+
+    try {
+      const rejectionMessage = status === 'rejected' && request.rejectionReason
+        ? ` Reason: ${request.rejectionReason}`
+        : '';
+      await createNotification({
+        user: request.user,
+        type: status === 'approved' ? 'partner_approved' : 'partner_rejected',
+        title: status === 'approved' ? 'Partner Request Approved' : 'Partner Request Rejected',
+        message: status === 'approved'
+          ? 'Your rescue partner request has been approved.'
+          : `Your rescue partner request has been rejected.${rejectionMessage}`,
+        relatedPartnerRequest: request._id,
+      });
+    } catch (notificationError) {
+      console.error('Failed to create partner notification:', notificationError.message);
+    }
     res.json({ success: true, data: { request: toResponse(request) } });
   } catch (error) {
     next(error);

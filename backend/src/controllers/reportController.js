@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const Report = require('../models/Report');
+const createNotification = require('../utils/createNotification');
 
 const SEVERITY_LEVELS = ['Low', 'Medium', 'High', 'Critical'];
 const VALID_STATUSES = ['new', 'assigned', 'inReview', 'resolved'];
@@ -255,6 +256,18 @@ const assignReport = async (req, res, next) => {
 
     await report.save();
 
+    try {
+      await createNotification({
+        user: report.user,
+        type: 'report_assigned',
+        title: 'Report Assigned',
+        message: `Your report has been assigned to ${req.user.name}.`,
+        relatedReport: report._id,
+      });
+    } catch (notificationError) {
+      console.error('Failed to create assignment notification:', notificationError.message);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Report assigned successfully',
@@ -334,6 +347,18 @@ const updateReportStatus = async (req, res, next) => {
     });
 
     await report.save();
+
+    try {
+      await createNotification({
+        user: report.user,
+        type: 'report_status_changed',
+        title: 'Report Status Updated',
+        message: `Your report status changed to ${status}.`,
+        relatedReport: report._id,
+      });
+    } catch (notificationError) {
+      console.error('Failed to create status notification:', notificationError.message);
+    }
 
     res.status(200).json({
       success: true,
