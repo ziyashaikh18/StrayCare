@@ -11,10 +11,12 @@ class HelpSupportScreen extends StatelessWidget {
     super.key,
     this.currentTabIndex = 4,
     this.onTabChanged,
+    this.showBottomNav = true,
   });
 
   final int currentTabIndex;
   final void Function(int index)? onTabChanged;
+  final bool showBottomNav;
 
   @override
   Widget build(BuildContext context) {
@@ -87,10 +89,12 @@ class HelpSupportScreen extends StatelessWidget {
           ],
         ),
       ),
-      bottomNavigationBar: StrayCareBottomNav(
-        currentIndex: currentTabIndex,
-        onTap: onTabChanged ?? (index) => _handleNavigation(context, index),
-      ),
+      bottomNavigationBar: showBottomNav
+          ? StrayCareBottomNav(
+              currentIndex: currentTabIndex,
+              onTap: onTabChanged ?? (index) => _handleNavigation(context, index),
+            )
+          : null,
     );
   }
 

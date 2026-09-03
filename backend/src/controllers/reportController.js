@@ -3,6 +3,14 @@ const path = require('path');
 const Report = require('../models/Report');
 
 const SEVERITY_LEVELS = ['Low', 'Medium', 'High', 'Critical'];
+const VALID_STATUSES = ['new', 'assigned', 'inReview', 'resolved'];
+
+const STATUS_ORDER = {
+  new: 0,
+  assigned: 1,
+  inReview: 2,
+  resolved: 3,
+};
 
 /**
  * Builds the public URL for an uploaded image based on the request host,
@@ -15,7 +23,18 @@ const buildImageUrl = (req, filename) => {
 
 const toReportResponse = (report) => ({
   id: report._id,
+  _id: report._id,
   user: report.user,
+  reporterId: report.user?._id || report.user,
+  reporter:
+    report.user && typeof report.user === 'object' && report.user.name
+      ? {
+          id: report.user._id,
+          name: report.user.name,
+          email: report.user.email,
+          phone: report.user.phone,
+        }
+      : undefined,
   imageUrl: report.imageUrl,
   animalType: report.animalType,
   injuryType: report.injuryType,
@@ -25,6 +44,11 @@ const toReportResponse = (report) => ({
   latitude: report.latitude,
   longitude: report.longitude,
   status: report.status,
+  assignedNgo: report.assignedNgo || null,
+  assignedAt: report.assignedAt,
+  inReviewAt: report.inReviewAt,
+  resolvedAt: report.resolvedAt,
+  timeline: report.timeline || [],
   createdAt: report.createdAt,
   updatedAt: report.updatedAt,
 });
@@ -90,6 +114,19 @@ const createReport = async (req, res, next) => {
       location: location ? location.trim() : undefined,
       latitude: lat,
       longitude: lng,
+      status: 'new',
+      timeline: [
+        {
+          status: 'new',
+          message: 'Rescue report submitted',
+          timestamp: new Date(),
+          performedBy: {
+            id: req.user._id,
+            name: req.user.name,
+            role: req.user.role,
+          },
+        },
+      ],
     });
 
     res.status(201).json({
@@ -99,7 +136,6 @@ const createReport = async (req, res, next) => {
     });
   } catch (error) {
     // If validation failed after multer already saved the file, clean it up
-    // so orphaned images don't pile up on disk.
     if (req.file) {
       fs.unlink(req.file.path, () => {});
     }
@@ -107,14 +143,17 @@ const createReport = async (req, res, next) => {
   }
 };
 
-// GET /api/reports  (protected — current user's own reports)
-const getMyReports = async (req, res, next) => {
+// GET /api/reports/admin/all (protected — NGO or Admin only)
+const getAllReports = async (req, res, next) => {
   try {
-    const { status } = req.query;
-    const filter = { user: req.user._id };
+    const { status, severity } = req.query;
+    const filter = {};
     if (status) filter.status = status;
+    if (severity) filter.severity = severity;
 
-    const reports = await Report.find(filter).sort({ createdAt: -1 });
+    const reports = await Report.find(filter)
+      .populate('user', 'name email phone avatarUrl')
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -126,8 +165,54 @@ const getMyReports = async (req, res, next) => {
   }
 };
 
-// GET /api/reports/:id  (protected — owner only)
+// GET /api/reports/my & GET /api/reports (protected — current user's own reports)
+const getMyReports = async (req, res, next) => {
+  try {
+    const { status } = req.query;
+    const filter = { user: req.user._id };
+    if (status) filter.status = status;
+
+    const reports = await Report.find(filter)
+      .populate('user', 'name email phone avatarUrl')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: reports.length,
+      data: { reports: reports.map(toReportResponse) },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// GET /api/reports/:id  (protected — owner, NGO, or admin)
 const getReportById = async (req, res, next) => {
+  try {
+    const report = await Report.findById(req.params.id).populate('user', 'name email phone avatarUrl');
+
+    if (!report) {
+      const err = new Error('Report not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (
+      report.user.toString() !== req.user._id.toString() &&
+      req.user.role === 'reporter'
+    ) {
+      const err = new Error('You do not have permission to view this report');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    res.status(200).json({ success: true, data: { report: toReportResponse(report) } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// PATCH /api/reports/:id/assign (protected — NGO or Admin only)
+const assignReport = async (req, res, next) => {
   try {
     const report = await Report.findById(req.params.id);
 
@@ -136,13 +221,125 @@ const getReportById = async (req, res, next) => {
       err.statusCode = 404;
       throw err;
     }
-    if (report.user.toString() !== req.user._id.toString() && req.user.role === 'reporter') {
-      const err = new Error('You do not have permission to view this report');
-      err.statusCode = 403;
+
+    // Restrict assignment if already assigned
+    if (report.assignedNgo && report.assignedNgo.id) {
+      const err = new Error(
+        `This case has already been assigned to ${report.assignedNgo.name || 'another NGO'}`
+      );
+      err.statusCode = 400;
       throw err;
     }
 
-    res.status(200).json({ success: true, data: { report: toReportResponse(report) } });
+    report.assignedNgo = {
+      id: req.user._id,
+      name: req.user.name,
+      email: req.user.email,
+      phone: req.user.phone || undefined,
+    };
+    report.status = 'assigned';
+    report.assignedAt = new Date();
+    report.updatedAt = new Date();
+
+    if (!report.timeline) report.timeline = [];
+    report.timeline.push({
+      status: 'assigned',
+      message: `Case assigned to ${req.user.name}`,
+      timestamp: new Date(),
+      performedBy: {
+        id: req.user._id,
+        name: req.user.name,
+        role: req.user.role,
+      },
+    });
+
+    await report.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Report assigned successfully',
+      data: { report: toReportResponse(report) },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// PATCH /api/reports/:id/status (protected — NGO or Admin only)
+const updateReportStatus = async (req, res, next) => {
+  try {
+    const { status } = req.body;
+
+    if (!status || !VALID_STATUSES.includes(status)) {
+      const err = new Error(
+        `Invalid status. Allowed statuses: ${VALID_STATUSES.join(', ')}`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const report = await Report.findById(req.params.id);
+    if (!report) {
+      const err = new Error('Report not found');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const currentOrder = STATUS_ORDER[report.status] ?? 0;
+    const newOrder = STATUS_ORDER[status] ?? 0;
+
+    if (report.status === status) {
+      return res.status(200).json({
+        success: true,
+        message: 'Report status is already up to date',
+        data: { report: toReportResponse(report) },
+      });
+    }
+
+    // Enforce forward-only progression
+    if (newOrder < currentOrder) {
+      const err = new Error(
+        `Cannot move status backward from "${report.status}" to "${status}". Progression must be: new → assigned → inReview → resolved.`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    report.status = status;
+    report.updatedAt = new Date();
+
+    let timelineMessage = `Case status updated to ${status}`;
+
+    if (status === 'assigned') {
+      if (!report.assignedAt) report.assignedAt = new Date();
+      timelineMessage = `Case marked as assigned`;
+    } else if (status === 'inReview') {
+      if (!report.inReviewAt) report.inReviewAt = new Date();
+      timelineMessage = `Case is under active review and rescue team is deployed`;
+    } else if (status === 'resolved') {
+      if (!report.resolvedAt) report.resolvedAt = new Date();
+      timelineMessage = `Rescue case has been resolved`;
+    }
+
+    if (!report.timeline) report.timeline = [];
+    report.timeline.push({
+      status,
+      message: timelineMessage,
+      timestamp: new Date(),
+      performedBy: {
+        id: req.user._id,
+        name: req.user.name,
+        role: req.user.role,
+      },
+    });
+
+    await report.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Report status updated successfully',
+      data: { report: toReportResponse(report) },
+    });
   } catch (error) {
     next(error);
   }
@@ -230,7 +427,6 @@ const deleteReport = async (req, res, next) => {
       throw err;
     }
 
-    // Best-effort cleanup of the stored image file.
     if (report.imageUrl) {
       const filename = report.imageUrl.split('/uploads/reports/')[1];
       if (filename) {
@@ -247,10 +443,84 @@ const deleteReport = async (req, res, next) => {
   }
 };
 
+// GET /api/reports/nearby  (protected — geospatial search for nearby reports)
+const getNearbyReports = async (req, res, next) => {
+  try {
+    const { lat, lng, radiusKm, status, severity } = req.query;
+
+    if (lat === undefined || lat === '') {
+      const err = new Error('lat is required');
+      err.statusCode = 400;
+      throw err;
+    }
+    const latitude = Number(lat);
+    if (Number.isNaN(latitude) || latitude < -90 || latitude > 90) {
+      const err = new Error('lat must be a valid number between -90 and 90');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (lng === undefined || lng === '') {
+      const err = new Error('lng is required');
+      err.statusCode = 400;
+      throw err;
+    }
+    const longitude = Number(lng);
+    if (Number.isNaN(longitude) || longitude < -180 || longitude > 180) {
+      const err = new Error('lng must be a valid number between -180 and 180');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    let radius = 5;
+    if (radiusKm !== undefined && radiusKm !== '') {
+      radius = Number(radiusKm);
+      if (Number.isNaN(radius) || radius <= 0) {
+        const err = new Error('radiusKm must be a positive number');
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+
+    const filter = {
+      geo: {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [longitude, latitude],
+          },
+          $maxDistance: radius * 1000,
+        },
+      },
+    };
+
+    if (status) {
+      filter.status = status;
+    }
+    if (severity) {
+      filter.severity = severity;
+    }
+
+    const reports = await Report.find(filter);
+
+    res.status(200).json({
+      success: true,
+      count: reports.length,
+      data: { reports: reports.map(toReportResponse) },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createReport,
+  getAllReports,
   getMyReports,
+  getNearbyReports,
   getReportById,
+  assignReport,
+  updateReportStatus,
   updateReport,
   deleteReport,
 };

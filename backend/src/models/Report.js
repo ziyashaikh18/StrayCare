@@ -70,9 +70,54 @@ const reportSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ['pending', 'accepted', 'in_progress', 'resolved'],
-      default: 'pending',
+      enum: ['new', 'assigned', 'inReview', 'resolved'],
+      default: 'new',
     },
+
+    assignedNgo: {
+      id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+      name: { type: String },
+      email: { type: String },
+      phone: { type: String },
+    },
+
+    assignedAt: {
+      type: Date,
+    },
+    inReviewAt: {
+      type: Date,
+    },
+    resolvedAt: {
+      type: Date,
+    },
+
+    timeline: [
+      {
+        status: {
+          type: String,
+          enum: ['new', 'assigned', 'inReview', 'resolved'],
+        },
+        message: {
+          type: String,
+          required: true,
+        },
+        timestamp: {
+          type: Date,
+          default: Date.now,
+        },
+        performedBy: {
+          id: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+          },
+          name: { type: String },
+          role: { type: String },
+        },
+      },
+    ],
   },
   { timestamps: true }
 );

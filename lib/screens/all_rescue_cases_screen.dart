@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
 import 'package:straycare_splash/screens/home_screen.dart';
 import 'package:straycare_splash/screens/report_screen.dart';
@@ -9,21 +12,17 @@ import 'package:straycare_splash/screens/notification_screen.dart';
 
 // ───────────────────────── Models ─────────────────────────
 
-/// AI-estimated priority tier for a case. This mirrors the "AI-based
-/// case priority classification" feature: a computer-vision model reads
-/// visible injury indicators from the photo, an NLP model reads the
-/// reporter's text description, and the two scores are combined into
-/// one of these tiers.
+/// AI-estimated priority tier for a case.
 enum CasePriority { critical, high, medium, low }
 
-/// Where a case currently sits in the NGO's rescue workflow. This is
-/// the "Case status tracking" feature.
-enum CaseStatus { newCase, inReview, assigned, resolved }
+/// Strict 4-state lifecycle: New → Assigned → In Review → Resolved
+enum CaseStatus { newCase, assigned, inReview, resolved }
 
 class RescueCase {
   const RescueCase({
     required this.id,
     required this.title,
+    required this.animalType,
     required this.imagePath,
     required this.priority,
     required this.aiConfidence,
@@ -33,22 +32,24 @@ class RescueCase {
     required this.timeAgo,
     required this.description,
     required this.photoCount,
+    this.reporterName,
+    this.reporterEmail,
+    this.reporterPhone,
+    this.assignedNgoName,
+    this.assignedNgoEmail,
+    this.assignedAt,
+    this.inReviewAt,
+    this.resolvedAt,
     this.isDuplicate = false,
     this.duplicateOfId,
   });
 
   final String id;
   final String title;
+  final String animalType;
   final String imagePath;
-
-  /// Combined vision + NLP priority tier.
   final CasePriority priority;
-
-  /// 0-100 AI confidence score behind the priority tier, e.g. "92%
-  /// visible urgency" — shown so NGO reviewers can judge how much to
-  /// trust the AI ranking.
   final int aiConfidence;
-
   final CaseStatus status;
   final String location;
   final double distanceKm;
@@ -56,25 +57,148 @@ class RescueCase {
   final String description;
   final int photoCount;
 
-  /// "Duplicate report detection" — flags when the image/location/time
-  /// similarity model thinks this is the same animal/incident as
-  /// another open report.
+  final String? reporterName;
+  final String? reporterEmail;
+  final String? reporterPhone;
+
+  final String? assignedNgoName;
+  final String? assignedNgoEmail;
+
+  final DateTime? assignedAt;
+  final DateTime? inReviewAt;
+  final DateTime? resolvedAt;
+
   final bool isDuplicate;
   final String? duplicateOfId;
+
+  factory RescueCase.fromJson(Map<String, dynamic> json) {
+    final animalType = json['animalType']?.toString() ?? 'Rescue Animal';
+    final injuryType = json['injuryType']?.toString();
+    final title = (injuryType != null && injuryType.trim().isNotEmpty)
+        ? '$animalType – $injuryType'
+        : (json['title']?.toString() ?? animalType);
+
+    final rawImageUrl = json['imageUrl']?.toString() ??
+        json['image']?.toString() ??
+        json['imagePath']?.toString() ??
+        'assets/images/InjuredDog.jpeg';
+
+    final reporterObj = json['reporter'] is Map ? json['reporter'] : null;
+    final userObj = json['user'] is Map ? json['user'] : null;
+    final assignedNgoObj = json['assignedNgo'] is Map ? json['assignedNgo'] : null;
+
+    final String? repName =
+        reporterObj?['name']?.toString() ?? userObj?['name']?.toString();
+    final String? repEmail =
+        reporterObj?['email']?.toString() ?? userObj?['email']?.toString();
+    final String? repPhone =
+        reporterObj?['phone']?.toString() ?? userObj?['phone']?.toString();
+
+    final String? ngoName = assignedNgoObj?['name']?.toString();
+    final String? ngoEmail = assignedNgoObj?['email']?.toString();
+
+    DateTime? parseDate(dynamic d) {
+      if (d == null) return null;
+      try {
+        return DateTime.parse(d.toString()).toLocal();
+      } catch (_) {
+        return null;
+      }
+    }
+
+    return RescueCase(
+      id: json['id']?.toString() ?? json['_id']?.toString() ?? 'RC-UNKNOWN',
+      title: title,
+      animalType: animalType,
+      imagePath: rawImageUrl,
+      priority: _parsePriority(json['severity'] ?? json['priority']),
+      aiConfidence: (json['aiConfidence'] as num?)?.toInt() ??
+          (json['confidence'] as num?)?.toInt() ??
+          88,
+      status: _parseStatus(json['status']),
+      location: json['location']?.toString() ?? 'Unknown location',
+      distanceKm: (json['distanceKm'] as num?)?.toDouble() ?? 1.2,
+      timeAgo: _calculateTimeAgo(json['createdAt']?.toString()) ??
+          json['timeAgo']?.toString() ??
+          'Recently',
+      description: json['description']?.toString() ?? 'No description provided.',
+      photoCount: (json['photoCount'] as num?)?.toInt() ?? 1,
+      reporterName: repName,
+      reporterEmail: repEmail,
+      reporterPhone: repPhone,
+      assignedNgoName: ngoName,
+      assignedNgoEmail: ngoEmail,
+      assignedAt: parseDate(json['assignedAt']),
+      inReviewAt: parseDate(json['inReviewAt']),
+      resolvedAt: parseDate(json['resolvedAt']),
+      isDuplicate: json['isDuplicate'] == true,
+      duplicateOfId:
+          json['duplicateOfId']?.toString() ?? json['duplicateOf']?.toString(),
+    );
+  }
 }
 
-/// The "View All" destination for Home's Urgent Rescue Cases card, and
-/// the RescuePriority NGO dashboard: a full, AI-prioritised, filterable,
-/// status-tracked list of every submitted rescue case.
+CasePriority _parsePriority(dynamic value) {
+  if (value == null) return CasePriority.medium;
+  final str = value.toString().toLowerCase();
+  if (str.contains('crit')) return CasePriority.critical;
+  if (str.contains('high')) return CasePriority.high;
+  if (str.contains('low')) return CasePriority.low;
+  return CasePriority.medium;
+}
+
+CaseStatus _parseStatus(dynamic value) {
+  if (value == null) return CaseStatus.newCase;
+  final str = value.toString().toLowerCase().replaceAll('_', '').trim();
+  if (str == 'assigned') return CaseStatus.assigned;
+  if (str == 'inreview' || str == 'inprogress') return CaseStatus.inReview;
+  if (str == 'resolved') return CaseStatus.resolved;
+  return CaseStatus.newCase;
+}
+
+String _toBackendStatus(CaseStatus status) {
+  switch (status) {
+    case CaseStatus.newCase:
+      return 'new';
+    case CaseStatus.assigned:
+      return 'assigned';
+    case CaseStatus.inReview:
+      return 'inReview';
+    case CaseStatus.resolved:
+      return 'resolved';
+  }
+}
+
+String? _calculateTimeAgo(String? dateStr) {
+  if (dateStr == null || dateStr.isEmpty) return null;
+  try {
+    final date = DateTime.parse(dateStr).toLocal();
+    final diff = DateTime.now().difference(date);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+    if (diff.inHours < 24) return '${diff.inHours} hr ago';
+    if (diff.inDays < 7) return '${diff.inDays} d ago';
+    return '${(diff.inDays / 7).floor()} w ago';
+  } catch (_) {
+    return null;
+  }
+}
+
+/// The shared NGO/Admin dashboard: full, live, AI-prioritised,
+/// status-tracked list of all submitted rescue cases.
 class AllRescueCasesScreen extends StatefulWidget {
   const AllRescueCasesScreen({
     super.key,
     this.onBack,
     this.currentTabIndex = 0,
+    this.showBottomNav = true,
+    this.showBackButton = true,
   });
 
   final VoidCallback? onBack;
   final int currentTabIndex;
+  final bool showBottomNav;
+  final bool showBackButton;
 
   static const Color kBackground = Color(0xFFF8F2FA);
   static const Color kDeepPurple = Color(0xFF2E1A47);
@@ -90,103 +214,327 @@ class AllRescueCasesScreen extends StatefulWidget {
 enum _DashboardFilter { all, critical, inReview, duplicates, resolved }
 
 class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
+  static const String _apiBaseUrl = 'http://10.250.236.99:5000';
+
   _DashboardFilter _filter = _DashboardFilter.all;
 
-  static const List<RescueCase> _cases = [
-    RescueCase(
-      id: 'RC-2025-0156',
-      title: 'Injured Dog',
-      imagePath: 'assets/images/InjuredDog.jpeg',
-      priority: CasePriority.critical,
-      aiConfidence: 94,
-      status: CaseStatus.inReview,
-      location: 'Bandra, Mumbai',
-      distanceKm: 1.2,
-      timeAgo: '12 min ago',
-      description: 'Dog with leg injury, unable to walk properly.',
-      photoCount: 3,
-    ),
-    RescueCase(
-      id: 'RC-2025-0157',
-      title: 'Injured Dog (possible duplicate)',
-      imagePath: 'assets/images/InjuredDog.jpeg',
-      priority: CasePriority.critical,
-      aiConfidence: 91,
-      status: CaseStatus.newCase,
-      location: 'Bandra, Mumbai',
-      distanceKm: 1.3,
-      timeAgo: '9 min ago',
-      description: 'Dog with leg injury near the same junction, limping.',
-      photoCount: 2,
-      isDuplicate: true,
-      duplicateOfId: 'RC-2025-0156',
-    ),
-    RescueCase(
-      id: 'RC-2025-0123',
-      title: 'Sick Cat',
-      imagePath: 'assets/images/sickcat.jpeg',
-      priority: CasePriority.high,
-      aiConfidence: 82,
-      status: CaseStatus.assigned,
-      location: 'Santacruz, Mumbai',
-      distanceKm: 2.4,
-      timeAgo: '34 min ago',
-      description: 'Cat looks weak and not eating since yesterday.',
-      photoCount: 2,
-    ),
-    RescueCase(
-      id: 'RC-2025-0140',
-      title: 'Rabbit – Skin Infection',
-      imagePath: 'assets/images/rabbit .png',
-      priority: CasePriority.medium,
-      aiConfidence: 68,
-      status: CaseStatus.newCase,
-      location: 'Khar, Mumbai',
-      distanceKm: 2.7,
-      timeAgo: '1 hr ago',
-      description: 'Visible skin infection and hair loss. Needs treatment.',
-      photoCount: 1,
-    ),
-    RescueCase(
-      id: 'RC-2025-0138',
-      title: 'Abandoned Kitten',
-      imagePath: 'assets/images/abondened kitten.png',
-      priority: CasePriority.medium,
-      aiConfidence: 61,
-      status: CaseStatus.inReview,
-      location: 'Bandra East, Mumbai',
-      distanceKm: 3.1,
-      timeAgo: '2 hr ago',
-      description: 'Small kitten seen alone near the garbage area.',
-      photoCount: 2,
-    ),
-    RescueCase(
-      id: 'RC-2025-0178',
-      title: 'Injured Dog',
-      imagePath: 'assets/images/injured dog.png',
-      priority: CasePriority.critical,
-      aiConfidence: 97,
-      status: CaseStatus.assigned,
-      location: 'Mahim, Mumbai',
-      distanceKm: 3.5,
-      timeAgo: '2 hr 30 min ago',
-      description: 'Hit by vehicle. Bleeding from mouth.',
-      photoCount: 1,
-    ),
-    RescueCase(
-      id: 'RC-2025-0099',
-      title: 'Stray Dog Recovering',
-      imagePath: 'assets/images/InjuredDog.jpeg',
-      priority: CasePriority.low,
-      aiConfidence: 34,
-      status: CaseStatus.resolved,
-      location: 'Andheri, Mumbai',
-      distanceKm: 4.6,
-      timeAgo: '1 day ago',
-      description: 'Follow-up visit done, wound healing well.',
-      photoCount: 1,
-    ),
-  ];
+  bool _isLoading = true;
+  String? _errorMessage;
+  List<RescueCase> _cases = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchCases();
+  }
+
+  Future<void> _fetchCases() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+
+      final response = await http.get(
+        Uri.parse('$_apiBaseUrl/api/reports/admin/all'),
+        headers: {
+          'Content-Type': 'application/json',
+          if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final dynamic reportList = data['data']?['reports'] ??
+            data['reports'] ??
+            (data['data'] is List ? data['data'] : null);
+
+        if (reportList is List) {
+          final List<RescueCase> loaded = [];
+          for (final item in reportList) {
+            if (item is Map<String, dynamic>) {
+              loaded.add(RescueCase.fromJson(item));
+            } else if (item is Map) {
+              loaded.add(RescueCase.fromJson(Map<String, dynamic>.from(item)));
+            }
+          }
+          if (mounted) {
+            setState(() {
+              _cases = loaded;
+              _isLoading = false;
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _cases = [];
+              _isLoading = false;
+            });
+          }
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _errorMessage = 'Failed to load cases (${response.statusCode})';
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Cannot connect to backend: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _assignCase(String id) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+
+      final response = await http.patch(
+        Uri.parse('$_apiBaseUrl/api/reports/$id/assign'),
+        headers: {
+          'Content-Type': 'application/json',
+          if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Case assigned to you successfully!'),
+              backgroundColor: AllRescueCasesScreen.kPurple,
+            ),
+          );
+        }
+        await _fetchCases();
+      } else {
+        String msg = 'Failed to assign case';
+        try {
+          final data = jsonDecode(response.body);
+          if (data['message'] != null) msg = data['message'];
+        } catch (_) {}
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(msg),
+              backgroundColor: const Color(0xFFE0524B),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error assigning case: $e'),
+            backgroundColor: const Color(0xFFE0524B),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _updateStatus(String id, CaseStatus status) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+
+      final statusString = _toBackendStatus(status);
+
+      final response = await http.patch(
+        Uri.parse('$_apiBaseUrl/api/reports/$id/status'),
+        headers: {
+          'Content-Type': 'application/json',
+          if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'status': statusString}),
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Status updated to ${_statusStyle(status).label}'),
+              backgroundColor: AllRescueCasesScreen.kPurple,
+            ),
+          );
+        }
+        await _fetchCases();
+      } else {
+        String msg = 'Failed to update status';
+        try {
+          final data = jsonDecode(response.body);
+          if (data['message'] != null) msg = data['message'];
+        } catch (_) {}
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(msg),
+              backgroundColor: const Color(0xFFE0524B),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating status: $e'),
+            backgroundColor: const Color(0xFFE0524B),
+          ),
+        );
+      }
+    }
+  }
+
+  void _showStatusSelectionSheet(BuildContext context, RescueCase rescueCase) {
+    // Determine allowed forward transitions
+    final List<CaseStatus> allowedNext = [];
+    if (rescueCase.status == CaseStatus.newCase) {
+      allowedNext.addAll([CaseStatus.assigned, CaseStatus.inReview, CaseStatus.resolved]);
+    } else if (rescueCase.status == CaseStatus.assigned) {
+      allowedNext.addAll([CaseStatus.inReview, CaseStatus.resolved]);
+    } else if (rescueCase.status == CaseStatus.inReview) {
+      allowedNext.add(CaseStatus.resolved);
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE7DBF2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Text(
+                'Update Case Status',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AllRescueCasesScreen.kDeepPurple,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Current: ${_statusStyle(rescueCase.status).label} • Progression: New → Assigned → In Review → Resolved',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AllRescueCasesScreen.kSubtitleGray,
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (rescueCase.status == CaseStatus.resolved)
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDFF4E4),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.check_circle, color: Color(0xFF3FAE5C)),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'This rescue case is fully resolved.',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF2E7D32),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                ...CaseStatus.values.map((status) {
+                  final style = _statusStyle(status);
+                  final isCurrent = rescueCase.status == status;
+                  final isAllowed = allowedNext.contains(status);
+
+                  return Opacity(
+                    opacity: (isCurrent || isAllowed) ? 1.0 : 0.4,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: isCurrent ? style.bg : const Color(0xFFFAF7FC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isCurrent
+                              ? style.text
+                              : AllRescueCasesScreen.kCardBorder,
+                          width: isCurrent ? 1.5 : 1,
+                        ),
+                      ),
+                      child: ListTile(
+                        leading: Icon(style.icon, color: style.text),
+                        title: Text(
+                          style.label,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: isCurrent
+                                ? style.text
+                                : AllRescueCasesScreen.kDeepPurple,
+                          ),
+                        ),
+                        trailing: isCurrent
+                            ? Icon(Icons.check_circle, color: style.text, size: 20)
+                            : (isAllowed
+                                ? const Icon(Icons.arrow_forward_rounded,
+                                    color: AllRescueCasesScreen.kPurple, size: 18)
+                                : const Text(
+                                    'Locked',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: AllRescueCasesScreen.kSubtitleGray,
+                                    ),
+                                  )),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        onTap: isAllowed
+                            ? () {
+                                Navigator.pop(ctx);
+                                _updateStatus(rescueCase.id, status);
+                              }
+                            : null,
+                      ),
+                    ),
+                  );
+                }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   List<RescueCase> get _filtered {
     switch (_filter) {
@@ -204,6 +552,7 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
   }
 
   void _handleNavTap(BuildContext context, int index) {
+    if (!widget.showBottomNav) return;
     if (index == widget.currentTabIndex) return;
     switch (index) {
       case 0:
@@ -239,6 +588,106 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
     }
   }
 
+  Widget _buildContent() {
+    if (_isLoading) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(
+              color: AllRescueCasesScreen.kPurple,
+            ),
+            SizedBox(height: 14),
+            Text(
+              'Loading rescue cases...',
+              style: TextStyle(
+                fontSize: 13,
+                color: AllRescueCasesScreen.kSubtitleGray,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_errorMessage != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.cloud_off_rounded,
+                size: 44,
+                color: Color(0xFFE0524B),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _errorMessage!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AllRescueCasesScreen.kDeepPurple,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: _fetchCases,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Retry'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AllRescueCasesScreen.kPurple,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_filtered.isEmpty) {
+      return RefreshIndicator(
+        color: AllRescueCasesScreen.kPurple,
+        onRefresh: _fetchCases,
+        child: const SingleChildScrollView(
+          physics: AlwaysScrollableScrollPhysics(),
+          child: SizedBox(
+            height: 350,
+            child: _EmptyState(),
+          ),
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      color: AllRescueCasesScreen.kPurple,
+      onRefresh: _fetchCases,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
+        itemCount: _filtered.length,
+        separatorBuilder: (context, index) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          final item = _filtered[index];
+          return _RescueCaseCard(
+            rescueCase: item,
+            onTap: () => _showCaseDetail(context, item),
+            onAssign: () => _assignCase(item.id),
+            onStatusTap: () => _showStatusSelectionSheet(context, item),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final total = _cases.length;
@@ -255,11 +704,14 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
         child: Column(
           children: [
             _TopBar(
+              showBackButton: widget.showBackButton,
               onBack: widget.onBack ?? () => Navigator.maybePop(context),
               onNotifications: () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const NotificationsScreen(),
+                  builder: (context) => NotificationsScreen(
+                    showBottomNav: widget.showBottomNav,
+                  ),
                 ),
               ),
             ),
@@ -277,28 +729,17 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
             ),
             const SizedBox(height: 10),
             Expanded(
-              child: _filtered.isEmpty
-                  ? const _EmptyState()
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
-                      itemCount: _filtered.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        return _RescueCaseCard(
-                          rescueCase: _filtered[index],
-                          onTap: () => _showCaseDetail(context, _filtered[index]),
-                        );
-                      },
-                    ),
+              child: _buildContent(),
             ),
           ],
         ),
       ),
-      bottomNavigationBar: StrayCareBottomNav(
-        currentIndex: widget.currentTabIndex,
-        onTap: (index) => _handleNavTap(context, index),
-      ),
+      bottomNavigationBar: widget.showBottomNav
+          ? StrayCareBottomNav(
+              currentIndex: widget.currentTabIndex,
+              onTap: (index) => _handleNavTap(context, index),
+            )
+          : null,
     );
   }
 
@@ -307,7 +748,17 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (context) => _CaseDetailSheet(rescueCase: rescueCase),
+      builder: (ctx) => _CaseDetailSheet(
+        rescueCase: rescueCase,
+        onAssign: () {
+          Navigator.pop(ctx);
+          _assignCase(rescueCase.id);
+        },
+        onStatusChange: () {
+          Navigator.pop(ctx);
+          _showStatusSelectionSheet(context, rescueCase);
+        },
+      ),
     );
   }
 }
@@ -315,8 +766,13 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
 // ───────────────────────── Top bar ─────────────────────────
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.onBack, required this.onNotifications});
+  const _TopBar({
+    required this.showBackButton,
+    required this.onBack,
+    required this.onNotifications,
+  });
 
+  final bool showBackButton;
   final VoidCallback onBack;
   final VoidCallback onNotifications;
 
@@ -327,17 +783,18 @@ class _TopBar extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            onTap: onBack,
-            child: const Padding(
-              padding: EdgeInsets.only(top: 4, right: 10),
-              child: Icon(
-                Icons.arrow_back,
-                color: AllRescueCasesScreen.kDeepPurple,
-                size: 24,
+          if (showBackButton)
+            GestureDetector(
+              onTap: onBack,
+              child: const Padding(
+                padding: EdgeInsets.only(top: 4, right: 10),
+                child: Icon(
+                  Icons.arrow_back,
+                  color: AllRescueCasesScreen.kDeepPurple,
+                  size: 24,
+                ),
               ),
             ),
-          ),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -352,7 +809,7 @@ class _TopBar extends StatelessWidget {
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'AI-prioritised for faster action',
+                  'Live rescue feed & NGO dispatcher',
                   style: TextStyle(
                     fontSize: 13,
                     color: AllRescueCasesScreen.kSubtitleGray,
@@ -594,7 +1051,7 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-// ───────────────────────── Case card ─────────────────────────
+// ───────────────────────── Styles ─────────────────────────
 
 ({Color bg, Color text, String label}) _priorityStyle(CasePriority p) {
   switch (p) {
@@ -634,19 +1091,19 @@ class _FilterChip extends StatelessWidget {
         label: 'New',
         icon: Icons.fiber_new_rounded
       );
+    case CaseStatus.assigned:
+      return (
+        bg: const Color(0xFFEBE0F7),
+        text: AllRescueCasesScreen.kPurple,
+        label: 'Assigned',
+        icon: Icons.assignment_ind_outlined
+      );
     case CaseStatus.inReview:
       return (
         bg: const Color(0xFFFBEAD6),
         text: const Color(0xFFE8A23D),
         label: 'In Review',
         icon: Icons.visibility_outlined
-      );
-    case CaseStatus.assigned:
-      return (
-        bg: const Color(0xFFEBE0F7),
-        text: AllRescueCasesScreen.kPurple,
-        label: 'Assigned',
-        icon: Icons.groups_outlined
       );
     case CaseStatus.resolved:
       return (
@@ -658,16 +1115,83 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
+// ───────────────────────── Image Helper ─────────────────────────
+
+class _CaseImage extends StatelessWidget {
+  const _CaseImage({
+    required this.imagePath,
+    required this.width,
+    required this.height,
+    this.borderRadius = 12,
+  });
+
+  final String imagePath;
+  final double width;
+  final double height;
+  final double borderRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget errorWidget = Container(
+      width: width,
+      height: height,
+      color: const Color(0xFFF1E7F7),
+      child: const Icon(
+        Icons.pets,
+        color: AllRescueCasesScreen.kPurple,
+        size: 28,
+      ),
+    );
+
+    Widget image;
+    if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+      image = Image.network(
+        imagePath,
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => errorWidget,
+      );
+    } else {
+      image = Image.asset(
+        imagePath,
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => errorWidget,
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: image,
+    );
+  }
+}
+
+// ───────────────────────── Case card ─────────────────────────
+
 class _RescueCaseCard extends StatelessWidget {
-  const _RescueCaseCard({required this.rescueCase, required this.onTap});
+  const _RescueCaseCard({
+    required this.rescueCase,
+    required this.onTap,
+    required this.onAssign,
+    required this.onStatusTap,
+  });
 
   final RescueCase rescueCase;
   final VoidCallback onTap;
+  final VoidCallback onAssign;
+  final VoidCallback onStatusTap;
 
   @override
   Widget build(BuildContext context) {
     final priority = _priorityStyle(rescueCase.priority);
     final status = _statusStyle(rescueCase.status);
+    final isAssigned = rescueCase.assignedNgoName != null ||
+        rescueCase.status == CaseStatus.assigned ||
+        rescueCase.status == CaseStatus.inReview ||
+        rescueCase.status == CaseStatus.resolved;
 
     return Material(
       color: Colors.white,
@@ -736,26 +1260,11 @@ class _RescueCaseCard extends StatelessWidget {
                 children: [
                   Stack(
                     children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.asset(
-                          rescueCase.imagePath,
-                          // Updated: wider and less tall, with BoxFit.cover
-                          width: 100,
-                          height: 100,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              Container(
-                            width: 100,
-                            height: 100,
-                            color: const Color(0xFFF1E7F7),
-                            child: const Icon(
-                              Icons.pets,
-                              color: AllRescueCasesScreen.kPurple,
-                              size: 28,
-                            ),
-                          ),
-                        ),
+                      _CaseImage(
+                        imagePath: rescueCase.imagePath,
+                        width: 100,
+                        height: 100,
+                        borderRadius: 12,
                       ),
                       Positioned(
                         left: 5,
@@ -764,8 +1273,8 @@ class _RescueCaseCard extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 3),
                           decoration: BoxDecoration(
-                            color:
-                                AllRescueCasesScreen.kPurple.withValues(alpha: 0.92),
+                            color: AllRescueCasesScreen.kPurple
+                                .withValues(alpha: 0.92),
                             borderRadius: BorderRadius.circular(7),
                           ),
                           child: Row(
@@ -829,15 +1338,67 @@ class _RescueCaseCard extends StatelessWidget {
                               label:
                                   '${priority.label} · ${rescueCase.aiConfidence}%',
                             ),
-                            _Pill(
-                              bg: status.bg,
-                              text: status.text,
-                              icon: status.icon,
-                              label: status.label,
+                            GestureDetector(
+                              onTap: onStatusTap,
+                              child: _Pill(
+                                bg: status.bg,
+                                text: status.text,
+                                icon: status.icon,
+                                label: status.label,
+                                trailingIcon: Icons.arrow_drop_down,
+                              ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
+                        if (rescueCase.reporterName != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.person_outline,
+                                    size: 12,
+                                    color: AllRescueCasesScreen.kSubtitleGray),
+                                const SizedBox(width: 3),
+                                Expanded(
+                                  child: Text(
+                                    'Reporter: ${rescueCase.reporterName}${rescueCase.reporterEmail != null ? ' (${rescueCase.reporterEmail})' : ''}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: AllRescueCasesScreen.kDeepPurple,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        if (rescueCase.assignedNgoName != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.verified_user_outlined,
+                                    size: 12,
+                                    color: AllRescueCasesScreen.kPurple),
+                                const SizedBox(width: 3),
+                                Expanded(
+                                  child: Text(
+                                    'Assigned to: ${rescueCase.assignedNgoName}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: AllRescueCasesScreen.kPurple,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         Row(
                           children: [
                             const Icon(
@@ -859,18 +1420,81 @@ class _RescueCaseCard extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          rescueCase.description,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11.5,
-                            color: Color(0xFF4A4152),
-                            height: 1.3,
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              // Action buttons row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (!isAssigned) ...[
+                    InkWell(
+                      onTap: onAssign,
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1E7F7),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: AllRescueCasesScreen.kPurple
+                                .withValues(alpha: 0.3),
                           ),
                         ),
-                      ],
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.person_add_alt_1_rounded,
+                                size: 14, color: AllRescueCasesScreen.kPurple),
+                            SizedBox(width: 4),
+                            Text(
+                              'Assign to me',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                                color: AllRescueCasesScreen.kPurple,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  InkWell(
+                    onTap: onStatusTap,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AllRescueCasesScreen.kCardBorder,
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.edit_note_rounded,
+                              size: 15,
+                              color: AllRescueCasesScreen.kSubtitleGray),
+                          SizedBox(width: 4),
+                          Text(
+                            'Status',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: AllRescueCasesScreen.kDeepPurple,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -889,12 +1513,14 @@ class _Pill extends StatelessWidget {
     required this.text,
     required this.icon,
     required this.label,
+    this.trailingIcon,
   });
 
   final Color bg;
   final Color text;
   final IconData icon;
   final String label;
+  final IconData? trailingIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -917,6 +1543,10 @@ class _Pill extends StatelessWidget {
               color: text,
             ),
           ),
+          if (trailingIcon != null) ...[
+            const SizedBox(width: 2),
+            Icon(trailingIcon, size: 14, color: text),
+          ],
         ],
       ),
     );
@@ -952,7 +1582,7 @@ class _EmptyState extends StatelessWidget {
             ),
             SizedBox(height: 4),
             Text(
-              'Try a different filter to see more cases.',
+              'Pull down to refresh or try a different filter.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12,
@@ -969,14 +1599,24 @@ class _EmptyState extends StatelessWidget {
 // ───────────────────────── Case detail sheet ─────────────────────────
 
 class _CaseDetailSheet extends StatelessWidget {
-  const _CaseDetailSheet({required this.rescueCase});
+  const _CaseDetailSheet({
+    required this.rescueCase,
+    required this.onAssign,
+    required this.onStatusChange,
+  });
 
   final RescueCase rescueCase;
+  final VoidCallback onAssign;
+  final VoidCallback onStatusChange;
 
   @override
   Widget build(BuildContext context) {
     final priority = _priorityStyle(rescueCase.priority);
     final status = _statusStyle(rescueCase.status);
+    final isAssigned = rescueCase.assignedNgoName != null ||
+        rescueCase.status == CaseStatus.assigned ||
+        rescueCase.status == CaseStatus.inReview ||
+        rescueCase.status == CaseStatus.resolved;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
@@ -986,130 +1626,157 @@ class _CaseDetailSheet extends StatelessWidget {
       ),
       child: SafeArea(
         top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE7DBF2),
-                  borderRadius: BorderRadius.circular(2),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE7DBF2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
-            ),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: Image.asset(
-                rescueCase.imagePath,
-                // Updated: slightly shorter height, still full width, BoxFit.cover
+              _CaseImage(
+                imagePath: rescueCase.imagePath,
                 width: double.infinity,
                 height: 180,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => Container(
-                  width: double.infinity,
-                  height: 180,
-                  color: const Color(0xFFF1E7F7),
-                  child: const Icon(
-                    Icons.pets,
-                    color: AllRescueCasesScreen.kPurple,
-                    size: 34,
+                borderRadius: 14,
+              ),
+              const SizedBox(height: 14),
+              Text(
+                rescueCase.title,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AllRescueCasesScreen.kDeepPurple,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Case ${rescueCase.id}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AllRescueCasesScreen.kSubtitleGray,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _Pill(
+                    bg: priority.bg,
+                    text: priority.text,
+                    icon: Icons.bolt_rounded,
+                    label:
+                        'AI Priority: ${priority.label} (${rescueCase.aiConfidence}%)',
                   ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              rescueCase.title,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: AllRescueCasesScreen.kDeepPurple,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Case ${rescueCase.id}',
-              style: const TextStyle(
-                fontSize: 12,
-                color: AllRescueCasesScreen.kSubtitleGray,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _Pill(
-                  bg: priority.bg,
-                  text: priority.text,
-                  icon: Icons.bolt_rounded,
-                  label:
-                      'AI Priority: ${priority.label} (${rescueCase.aiConfidence}%)',
-                ),
-                _Pill(
-                  bg: status.bg,
-                  text: status.text,
-                  icon: status.icon,
-                  label: status.label,
-                ),
-                if (rescueCase.isDuplicate)
-                  const _Pill(
-                    bg: Color(0xFFFBEAD6),
-                    text: Color(0xFFAD7422),
-                    icon: Icons.content_copy_rounded,
-                    label: 'Flagged as duplicate',
-                  ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Text(
-              rescueCase.description,
-              style: const TextStyle(
-                fontSize: 13.5,
-                color: Color(0xFF4A4152),
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Icon(Icons.location_on,
-                    size: 14, color: AllRescueCasesScreen.kSubtitleGray),
-                const SizedBox(width: 4),
-                Text(
-                  '${rescueCase.location} • ${rescueCase.distanceKm} km • ${rescueCase.timeAgo}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AllRescueCasesScreen.kSubtitleGray,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            // If the case is already assigned to a rescue team, only show
-            // a full-width Close button — the Assign action is omitted.
-            if (rescueCase.status == CaseStatus.assigned)
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AllRescueCasesScreen.kPurple,
-                    side: const BorderSide(
-                        color: AllRescueCasesScreen.kCardBorder),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                  GestureDetector(
+                    onTap: onStatusChange,
+                    child: _Pill(
+                      bg: status.bg,
+                      text: status.text,
+                      icon: status.icon,
+                      label: status.label,
+                      trailingIcon: Icons.arrow_drop_down,
                     ),
                   ),
-                  child: const Text('Close'),
+                  if (rescueCase.isDuplicate)
+                    const _Pill(
+                      bg: Color(0xFFFBEAD6),
+                      text: Color(0xFFAD7422),
+                      icon: Icons.content_copy_rounded,
+                      label: 'Flagged as duplicate',
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              if (rescueCase.reporterName != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF6F0FA),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.person,
+                          color: AllRescueCasesScreen.kPurple, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Reported by: ${rescueCase.reporterName}${rescueCase.reporterEmail != null ? ' (${rescueCase.reporterEmail})' : ''}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AllRescueCasesScreen.kDeepPurple,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              )
-            else
+                const SizedBox(height: 10),
+              ],
+              if (rescueCase.assignedNgoName != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEBE0F7),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.verified_user,
+                          color: AllRescueCasesScreen.kPurple, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Assigned NGO: ${rescueCase.assignedNgoName}${rescueCase.assignedNgoEmail != null ? ' (${rescueCase.assignedNgoEmail})' : ''}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AllRescueCasesScreen.kPurple,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              Text(
+                rescueCase.description,
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  color: Color(0xFF4A4152),
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.location_on,
+                      size: 14, color: AllRescueCasesScreen.kSubtitleGray),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '${rescueCase.location} • ${rescueCase.distanceKm} km • ${rescueCase.timeAgo}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AllRescueCasesScreen.kSubtitleGray,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
               Row(
                 children: [
                   Expanded(
@@ -1127,24 +1794,46 @@ class _CaseDetailSheet extends StatelessWidget {
                       child: const Text('Close'),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AllRescueCasesScreen.kPurple,
-                        foregroundColor: Colors.white,
+                    child: OutlinedButton.icon(
+                      onPressed: onStatusChange,
+                      icon: const Icon(Icons.edit_note_rounded, size: 18),
+                      label: const Text('Status'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AllRescueCasesScreen.kDeepPurple,
+                        side: const BorderSide(
+                            color: AllRescueCasesScreen.kCardBorder),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                         ),
                       ),
-                      child: const Text('Assign to Rescue Team'),
                     ),
                   ),
+                  if (!isAssigned) ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton.icon(
+                        onPressed: onAssign,
+                        icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+                        label: const Text('Assign to me'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AllRescueCasesScreen.kPurple,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );

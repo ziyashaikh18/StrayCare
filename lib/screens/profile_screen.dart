@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:straycare_splash/screens/ai_scanner_screen.dart';
 import 'package:straycare_splash/screens/help_support_screen.dart';
 import 'package:straycare_splash/screens/home_screen.dart';
+import 'package:straycare_splash/screens/login_screen.dart';
 import 'package:straycare_splash/screens/my_activity_screen.dart';
 import 'package:straycare_splash/screens/my_report_screen.dart';
 import 'package:straycare_splash/screens/notification_screen.dart';
@@ -36,6 +38,7 @@ class ProfileScreen extends StatelessWidget {
     this.onLogOut,
     this.currentTabIndex = 4,
     this.onTabChanged,
+    this.showBottomNav = true,
   });
 
   final String userName;
@@ -63,6 +66,7 @@ class ProfileScreen extends StatelessWidget {
 
   final int currentTabIndex;
   final void Function(int index)? onTabChanged;
+  final bool showBottomNav;
 
   static const Color kBackground = Color(0xFFEDE3F5);
   static const Color kDeepPurple = Color(0xFF2E1A47);
@@ -103,7 +107,7 @@ class ProfileScreen extends StatelessWidget {
             TextButton(
               onPressed: () {
                 Navigator.pop(dialogContext);
-                onLogOut?.call();
+                _logOut(context);
               },
               child: const Text(
                 'Log Out',
@@ -116,6 +120,20 @@ class ProfileScreen extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  Future<void> _logOut(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('token');
+    await prefs.remove('role');
+
+    if (!context.mounted) return;
+
+    onLogOut?.call();
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
     );
   }
 
@@ -172,7 +190,6 @@ class ProfileScreen extends StatelessWidget {
                 userBadge: userBadge,
                 onPersonalInformation: onPersonalInformation,
                 onNotifications: onNotifications,
-
                 onMyActivity: onMyActivity ??
                     () {
                       Navigator.push(
@@ -182,7 +199,6 @@ class ProfileScreen extends StatelessWidget {
                         ),
                       );
                     },
-
                 onRescuePoints: onRescuePoints ??
                     () {
                       Navigator.push(
@@ -194,17 +210,17 @@ class ProfileScreen extends StatelessWidget {
                         ),
                       );
                     },
-
                 onHelpSupport: onHelpSupport ??
                     () {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const HelpSupportScreen(),
+                          builder: (_) => HelpSupportScreen(
+                            showBottomNav: showBottomNav,
+                          ),
                         ),
                       );
                     },
-
                 onLogOut: () => _confirmLogOut(context),
               ),
 
@@ -214,10 +230,12 @@ class ProfileScreen extends StatelessWidget {
           ),
         ),
       ),
-      bottomNavigationBar: StrayCareBottomNav(
-        currentIndex: currentTabIndex,
-        onTap: onTabChanged ?? (index) => _handleNavTap(context, index),
-      ),
+      bottomNavigationBar: showBottomNav
+          ? StrayCareBottomNav(
+              currentIndex: currentTabIndex,
+              onTap: onTabChanged ?? (index) => _handleNavTap(context, index),
+            )
+          : null,
     );
   }
 
@@ -882,8 +900,7 @@ class _ActionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final iconColor =
-        accent ? ProfileScreen.kPink : ProfileScreen.kDeepPurple;
+    final iconColor = accent ? ProfileScreen.kPink : ProfileScreen.kDeepPurple;
 
     return InkWell(
       onTap: onTap,

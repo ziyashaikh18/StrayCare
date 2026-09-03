@@ -77,6 +77,98 @@ const parseAiResponse = (responseText) => {
 };
 
 /**
+ * Calls OpenRouter API with the image.
+ */
+const callOpenRouter = async (imageBase64, mimeType = 'image/jpeg') => {
+  console.log("OpenRouter key loaded:", !!process.env.OPENROUTER_API_KEY);
+
+  const prompt = `You are an expert veterinary AI assistant. Analyze the uploaded image of a stray animal and provide a detailed assessment.
+
+Return ONLY valid JSON with NO markdown formatting, NO code blocks, and NO additional text. The JSON must be valid and parseable.
+
+JSON Structure:
+{
+  "animalType": "type of animal (e.g., Dog, Cat, Rabbit, etc.)",
+  "injuryType": "description of the injury or condition observed",
+  "severity": "Low | Medium | High | Critical",
+  "confidence": 85,
+  "description": "detailed description of the animal's condition",
+  "suggestion": "recommended next steps for rescue or treatment",
+  "detectedObjects": ["list", "of", "detected", "objects"]
+}
+
+Ensure:
+- confidence is an integer between 0 and 100
+- severity is exactly one of: Low, Medium, High, Critical
+- animalType is a single animal type
+- All fields are present and non-empty
+- Response is pure JSON only`;
+
+  try {
+    const response = await axios.post(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        model: "google/gemma-3-27b-it:free",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:image/jpeg;base64,${imageBase64}`,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!response.data || !response.data.choices || !response.data.choices[0]) {
+      throw new Error(`OpenRouter API returned invalid response`);
+    }
+
+    const generatedText = response.data.choices[0].message.content;
+
+    if (!generatedText) {
+      throw new Error('No generated text in OpenRouter response');
+    }
+
+    const parsed = parseAiResponse(generatedText);
+
+    if (!isValidAiResponse(parsed)) {
+      throw new Error(
+        'OpenRouter response missing required fields or invalid structure'
+      );
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error('OpenRouter Error:');
+
+    if (error.response) {
+      console.error('Status:', error.response.status);
+      console.error(
+        'Body:',
+        JSON.stringify(error.response.data, null, 2)
+      );
+    } else {
+      console.error(error.message);
+    }
+
+    throw error;
+  }
+};
+
+/**
  * Calls Hugging Face Inference API with the image.
  */
 const callHuggingFace = async (imageBase64, mimeType) => {
@@ -254,56 +346,78 @@ const analyzeImage = async (req, res, next) => {
     const mimeType = req.file.mimetype || 'image/jpeg';
 
     let analysisResult;
-    let provider = 'huggingface';
+    let provider = 'openrouter';
 
     try {
-      console.log('AI Provider: Attempting HuggingFace...');
+      console.log('AI Provider: Attempting OpenRouter...');
 
-      analysisResult = await callHuggingFace(
+      analysisResult = await callOpenRouter(
         imageBase64,
         mimeType
       );
 
-      console.log('AI Provider: HuggingFace (success)');
-    } catch (hfError) {
+      console.log('AI Provider: OpenRouter (success)');
+    } catch (openRouterError) {
       console.warn(
-        'AI Provider: HuggingFace failed, falling back to Gemini'
+        'AI Provider: OpenRouter failed, falling back to HuggingFace / Gemini'
       );
 
       console.error(
-        'HuggingFace Error Details:',
-        hfError.message
+        'OpenRouter Error Details:',
+        openRouterError.message
       );
 
       try {
-        console.log('AI Provider: Attempting Gemini (fallback)...');
+        console.log('AI Provider: Attempting HuggingFace (fallback)...');
 
-        analysisResult = await callGemini(
+        analysisResult = await callHuggingFace(
           imageBase64,
           mimeType
         );
 
-        provider = 'gemini';
+        provider = 'huggingface';
 
-        console.log(
-          'AI Provider: Gemini (fallback - success)'
-        );
-      } catch (geminiError) {
-        console.error(
-          'AI Provider: Both HuggingFace and Gemini failed'
+        console.log('AI Provider: HuggingFace (fallback - success)');
+      } catch (hfError) {
+        console.warn(
+          'AI Provider: HuggingFace failed, falling back to Gemini'
         );
 
         console.error(
-          'Gemini Error Details:',
-          geminiError.message
+          'HuggingFace Error Details:',
+          hfError.message
         );
 
-        const err = new Error(
-          'AI analysis is temporarily unavailable.'
-        );
+        try {
+          console.log('AI Provider: Attempting Gemini (fallback)...');
 
-        err.statusCode = 503;
-        throw err;
+          analysisResult = await callGemini(
+            imageBase64,
+            mimeType
+          );
+
+          provider = 'gemini';
+
+          console.log(
+            'AI Provider: Gemini (fallback - success)'
+          );
+        } catch (geminiError) {
+          console.error(
+            'AI Provider: All AI providers (OpenRouter, HuggingFace, Gemini) failed'
+          );
+
+          console.error(
+            'Gemini Error Details:',
+            geminiError.message
+          );
+
+          const err = new Error(
+            'AI analysis is temporarily unavailable.'
+          );
+
+          err.statusCode = 503;
+          throw err;
+        }
       }
     }
 

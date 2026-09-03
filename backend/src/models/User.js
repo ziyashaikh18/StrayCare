@@ -28,6 +28,10 @@ const userSchema = new mongoose.Schema(
       enum: ['reporter', 'ngo', 'admin'],
       default: 'reporter',
     },
+    partnerStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+    },
 
     // Email verification
     isEmailVerified: {

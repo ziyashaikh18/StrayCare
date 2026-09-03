@@ -1,12 +1,16 @@
 const express = require('express');
 const {
   createReport,
+  getAllReports,
   getMyReports,
+  getNearbyReports,
   getReportById,
+  assignReport,
+  updateReportStatus,
   updateReport,
   deleteReport,
 } = require('../controllers/reportController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, requireRole } = require('../middleware/authMiddleware');
 const { handleReportImageUpload } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
@@ -15,8 +19,13 @@ const router = express.Router();
 router.use(protect);
 
 router.post('/', handleReportImageUpload, createReport);
+router.get('/admin/all', requireRole('ngo', 'admin'), getAllReports);
+router.get('/my', getMyReports);
 router.get('/', getMyReports);
+router.get('/nearby', getNearbyReports);
 router.get('/:id', getReportById);
+router.patch('/:id/assign', requireRole('ngo', 'admin'), assignReport);
+router.patch('/:id/status', requireRole('ngo', 'admin'), updateReportStatus);
 router.put('/:id', updateReport);
 router.delete('/:id', deleteReport);
 

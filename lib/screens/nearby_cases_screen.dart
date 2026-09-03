@@ -46,10 +46,14 @@ class NearbyCasesScreen extends StatefulWidget {
     super.key,
     this.onBack,
     this.currentTabIndex = 0,
+    this.showBottomNav = true,
+    this.showBackButton = true,
   });
 
   final VoidCallback? onBack;
   final int currentTabIndex;
+  final bool showBottomNav;
+  final bool showBackButton;
 
   static const Color kBackground = Color.fromARGB(255, 225, 215, 228);
   static const Color kDeepPurple = Color(0xFF2E1A47);
@@ -218,7 +222,11 @@ class _NearbyCasesScreenState extends State<NearbyCasesScreen> {
               ),
               onProfile: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const ProfileScreen()),
+                MaterialPageRoute(
+                  builder: (context) => ProfileScreen(
+                    showBottomNav: widget.showBottomNav,
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: 14),
@@ -265,10 +273,12 @@ class _NearbyCasesScreenState extends State<NearbyCasesScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: StrayCareBottomNav(
-        currentIndex: widget.currentTabIndex,
-        onTap: (index) => _handleNavTap(context, index),
-      ),
+      bottomNavigationBar: widget.showBottomNav
+          ? StrayCareBottomNav(
+              currentIndex: widget.currentTabIndex,
+              onTap: (index) => _handleNavTap(context, index),
+            )
+          : null,
     );
   }
 }

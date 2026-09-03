@@ -43,11 +43,13 @@ class NotificationsScreen extends StatefulWidget {
     this.onBack,
     this.onSettings,
     this.currentTabIndex = 4,
+    this.showBottomNav = true,
   });
 
   final VoidCallback? onBack;
   final VoidCallback? onSettings;
   final int currentTabIndex;
+  final bool showBottomNav;
 
   static const Color kBackground = Color(0xFFF8F2FA);
   static const Color kDeepPurple = Color(0xFF2E1A47);
@@ -245,10 +247,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: StrayCareBottomNav(
-        currentIndex: widget.currentTabIndex,
-        onTap: (index) => _handleNavTap(context, index),
-      ),
+      bottomNavigationBar: widget.showBottomNav
+          ? StrayCareBottomNav(
+              currentIndex: widget.currentTabIndex,
+              onTap: (index) => _handleNavTap(context, index),
+            )
+          : null,
     );
   }
 }

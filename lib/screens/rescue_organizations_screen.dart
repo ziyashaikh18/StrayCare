@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'partner_request_form_screen.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
 
 class _Organization {
@@ -1028,11 +1029,12 @@ class _RescueOrganizationsScreenState
           ),
           const SizedBox(width: 8),
           ElevatedButton(
-            onPressed: () {
-              _showMessage(
-                'NGO suggestion feature will be added later.',
-              );
-            },
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const PartnerRequestFormScreen(),
+              ),
+            ),
             style: ElevatedButton.styleFrom(
               backgroundColor: kAccentPurple,
               foregroundColor: Colors.white,
@@ -1046,7 +1048,7 @@ class _RescueOrganizationsScreenState
               ),
             ),
             child: const Text(
-              'Suggest an NGO',
+              'Become a Rescue Partner',
               style: TextStyle(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w700,

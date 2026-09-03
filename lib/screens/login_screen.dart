@@ -1,4 +1,6 @@
 import 'home_screen.dart';
+import 'ngo_home_screen.dart';
+import 'admin_home_screen.dart';
 import 'forgot_password_screen.dart';
 import 'package:flutter/material.dart';
 import 'sign_up_screen.dart';
@@ -57,18 +59,61 @@ class _LoginScreenState extends State<LoginScreen> {
     final data = jsonDecode(response.body);
 
     if (response.statusCode == 200 && data["success"] == true) {
-      // Save JWT token
+      // Save JWT token and role
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString("token", data["data"]["token"]);
 
+      final role = data["data"]?["user"]?["role"] as String?;
+      if (role != null) {
+        await prefs.setString("role", role);
+      }
+      final user = data["data"]?["user"];
+      if (user is Map) {
+        final userFields = <String, String>{
+          "user_name": user["name"]?.toString() ?? "",
+          "user_email": user["email"]?.toString() ?? "",
+          "user_phone": user["phone"]?.toString() ?? "",
+          "user_location": user["location"]?.toString() ?? "",
+          "organization": user["organization"]?.toString() ?? "",
+          "partner_status": user["partnerStatus"]?.toString() ?? "",
+        };
+        for (final entry in userFields.entries) {
+          if (entry.value.isNotEmpty) {
+            await prefs.setString(entry.key, entry.value);
+          } else {
+            await prefs.remove(entry.key);
+          }
+        }
+      }
+
       if (!mounted) return;
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const HomeScreen(),
-        ),
-      );
+      if (role == "admin") {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const AdminHomeScreen(),
+          ),
+        );
+      } else if (role == "ngo") {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const NgoHomeScreen(),
+          ),
+        );
+      } else if (role == "reporter") {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const HomeScreen(),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Unsupported account role")),
+        );
+      }
     } else {
       if (!mounted) return;
 
