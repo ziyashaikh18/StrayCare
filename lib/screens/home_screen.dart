@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -63,12 +64,14 @@ class _HomeScreenState extends State<HomeScreen> {
       } catch (_) {}
 
       final response = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}/api/reports/nearby?lat=$latitude&lng=$longitude&radiusKm=50'),
+        Uri.parse(
+            '${ApiConfig.baseUrl}/api/reports/nearby?lat=$latitude&lng=$longitude&radiusKm=50'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) return;
       final reports = (jsonDecode(response.body)['data']['reports'] as List)
-          .where((report) => report['severity'] == 'Critical' || report['severity'] == 'High')
+          .where((report) =>
+              report['severity'] == 'Critical' || report['severity'] == 'High')
           .take(3)
           .map((report) => _UrgentCaseData.fromJson(report))
           .toList();
@@ -99,7 +102,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => AiAnalysisLoadingScreen(
-          imagePath: image.path,
+          image: image as XFile,
         ),
       ),
     );
@@ -218,20 +221,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     _WelcomeBanner(userName: widget.userName),
                     const SizedBox(height: 16),
-
                     _ReportRescueButton(onTap: _openReportScreen),
                     const SizedBox(height: 16),
-
                     _QuickActionsGrid(
                       onAiScanTap: _openAiScanner,
                       onNearbyCasesTap: _openNearbyCases,
                       onOrganizationsTap: _openRescueOrganizations,
                     ),
                     const SizedBox(height: 20),
-
                     _buildUrgentCasesCard(),
                     const SizedBox(height: 20),
-
                     const _StatsStrip(),
                     const SizedBox(height: 14),
                   ],
@@ -889,9 +888,12 @@ class _UrgentCaseData {
     return _UrgentCaseData(
       title: json['animalType']?.toString() ?? 'Animal in need',
       badgeLabel: severity,
-      badgeColor: severity == 'Critical' ? const Color(0xFFE0426B) : const Color(0xFFE8A23D),
+      badgeColor: severity == 'Critical'
+          ? const Color(0xFFE0426B)
+          : const Color(0xFFE8A23D),
       location: json['location']?.toString() ?? 'Mumbai',
-      description: json['description']?.toString() ?? 'Urgent rescue case reported nearby.',
+      description: json['description']?.toString() ??
+          'Urgent rescue case reported nearby.',
       timeAgo: _timeAgo(createdAt),
       imageUrl: json['imageUrl']?.toString(),
     );
@@ -968,11 +970,11 @@ class _RescueCaseRow extends StatelessWidget {
                     ),
                   )
                 : Image.asset(
-              imagePath,
-              width: 92,
-              height: 62,
-              fit: BoxFit.cover,
-            ),
+                    imagePath,
+                    width: 92,
+                    height: 62,
+                    fit: BoxFit.cover,
+                  ),
           ),
           const SizedBox(width: 10),
           Expanded(

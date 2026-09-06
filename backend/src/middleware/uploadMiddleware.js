@@ -13,11 +13,10 @@ const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 const allowedMimeTypes = [
   'image/jpeg',
-  'image/jpg',
   'image/png',
   'image/webp',
   'image/heic',
-  'application/octet-stream', // Flutter Android fallback
+  'image/heif',
 ];
 
 const allowedExtensions = [
@@ -26,6 +25,7 @@ const allowedExtensions = [
   '.png',
   '.webp',
   '.heic',
+  '.heif',
 ];
 
 const storage = multer.diskStorage({
@@ -54,8 +54,14 @@ const fileFilter = (req, file, cb) => {
     return cb(null, true);
   }
 
+  console.warn('[Upload] Rejected file:', {
+    originalname: file.originalname,
+    mimetype: file.mimetype,
+    extension: ext,
+  });
+
   const err = new Error(
-    `Unsupported image type: ${file.mimetype}. Allowed: JPEG, PNG, WEBP, HEIC.`
+    'Unsupported image format. Allowed formats: JPG, JPEG, PNG, WEBP, HEIC, HEIF.'
   );
 
   err.statusCode = 400;

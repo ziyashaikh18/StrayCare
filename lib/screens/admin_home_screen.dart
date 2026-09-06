@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'all_rescue_cases_screen.dart';
+import 'admin_partners_screen.dart';
+import 'admin_profile_screen.dart';
 import 'rescue_partner_requests_screen.dart';
 
 class AdminHomeScreen extends StatefulWidget {
@@ -26,6 +28,8 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       ),
       const RescuePartnerRequestsScreen(),
       const AllRescueCasesScreen(showBottomNav: false, showBackButton: false),
+      const AdminPartnersScreen(),
+      const AdminProfileScreen(),
     ];
 
     return Scaffold(
@@ -48,7 +52,17 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
           NavigationDestination(
             icon: Icon(Icons.assignment_outlined),
             selectedIcon: Icon(Icons.assignment),
-            label: 'Cases',
+            label: 'Reports',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.handshake_outlined),
+            selectedIcon: Icon(Icons.handshake),
+            label: 'Partners',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: 'Profile',
           ),
         ],
       ),
@@ -57,7 +71,8 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
 }
 
 class _AdminOverview extends StatelessWidget {
-  const _AdminOverview({required this.onOpenRequests, required this.onOpenCases});
+  const _AdminOverview(
+      {required this.onOpenRequests, required this.onOpenCases});
 
   final VoidCallback onOpenRequests;
   final VoidCallback onOpenCases;

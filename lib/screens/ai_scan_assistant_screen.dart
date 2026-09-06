@@ -1,5 +1,12 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../config/api_config.dart';
+import '../utils/image_upload.dart';
 
 /// StrayCare "AI Scan Assistant" chat screen.
 ///
@@ -12,11 +19,21 @@ class InjuryResult {
     required this.title,
     required this.severity,
     required this.description,
+    this.animalType = 'Unknown',
+    this.condition = 'No visible condition identified.',
+    this.firstAid = '',
+    this.confidence = 0,
+    this.speciesVerifiedBy = 'gemini',
   });
 
   final String title;
   final String severity; // e.g. "Low" | "Medium" | "High"
   final String description;
+  final String animalType;
+  final String condition;
+  final String firstAid;
+  final int confidence;
+  final String speciesVerifiedBy;
 
   Color get severityColor {
     switch (severity.toLowerCase()) {
@@ -44,11 +61,14 @@ class _ChatMsg {
     required this.type,
     required this.time,
     this.text,
-  }) : feedbackGiven = false , locationResolved = false;
+    this.isTyping = false,
+  })  : feedbackGiven = false,
+        locationResolved = false;
 
   final _MsgType type;
   final String time;
   final String? text;
+  bool isTyping;
   bool feedbackGiven;
   bool locationResolved;
 }
@@ -56,12 +76,11 @@ class _ChatMsg {
 class AiScanAssistantScreen extends StatefulWidget {
   const AiScanAssistantScreen({
     super.key,
-    required this.imagePath,
+    required this.imageFile,
     this.result,
   });
 
-  /// Path to the captured/selected image (from the scanner or gallery).
-  final String imagePath;
+  final File imageFile;
 
   /// Injury analysis result. Falls back to a mock result if not provided,
   /// so this screen can be wired up before the real AI model is ready.
@@ -71,7 +90,8 @@ class AiScanAssistantScreen extends StatefulWidget {
   State<AiScanAssistantScreen> createState() => _AiScanAssistantScreenState();
 }
 
-class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
+class _AiScanAssistantScreenState extends State<AiScanAssistantScreen>
+    with SingleTickerProviderStateMixin {
   static const Color kPurple = Color(0xFF6A3EA1);
   static const Color kPurpleLight = Color(0xFFB88CE8);
   static const Color kBg = Color(0xFF0A0620);
@@ -79,29 +99,32 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
   static const Color kBubble = Color(0xFF171033);
   static const Color kBubbleBorder = Color(0xFF2A2050);
 
-  late final InjuryResult _result;
+  InjuryResult _result = const InjuryResult(
+    title: 'Analyzing image',
+    severity: 'Medium',
+    description: 'Gemini is reviewing the visible condition.',
+  );
   final List<_ChatMsg> _messages = [];
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  late final AnimationController _typingController;
+  bool _isSending = false;
 
   @override
   void initState() {
     super.initState();
-    _result = widget.result ??
-        const InjuryResult(
-          title: 'Possible Injury Detected',
-          severity: 'High',
-          description:
-              'There appears to be a wound on the head. The area looks '
-              'painful and may need medical care.',
-        );
-    _seedConversation();
+    _typingController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 840),
+    )..repeat();
+    _loadAnalysis();
   }
 
   @override
   void dispose() {
     _inputController.dispose();
     _scrollController.dispose();
+    _typingController.dispose();
     super.dispose();
   }
 
@@ -116,12 +139,12 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
     return '$hour:$minute $period';
   }
 
-  void _seedConversation() {
+  void _seedConversation(String reply) {
     _messages.addAll([
       _ChatMsg(
         type: _MsgType.botText,
         time: _now,
-        text: "I've analyzed the image you uploaded. Here's what I found:",
+        text: reply,
       ),
       _ChatMsg(type: _MsgType.analysisCard, time: _now),
       _ChatMsg(
@@ -131,6 +154,83 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
       ),
       _ChatMsg(type: _MsgType.quickActions, time: _now),
     ]);
+  }
+
+  Future<Map<String, dynamic>> _requestChat(String message) async {
+    final imageExists = await widget.imageFile.exists();
+    debugPrint('AI Scan file exists before upload: $imageExists');
+    if (!imageExists) {
+      throw Exception(
+        'Image is no longer available. Please scan the animal again.',
+      );
+    }
+
+    debugPrint(
+      'AI Scan final path used for /api/chat: ${widget.imageFile.path}',
+    );
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${ApiConfig.baseUrl}/api/chat'),
+    )
+      ..fields['message'] = message
+      ..headers['Authorization'] = 'Bearer ${token ?? ''}'
+      ..files.add(
+        await http.MultipartFile.fromPath(
+          'image',
+          widget.imageFile.path,
+          contentType: MediaType.parse(
+            imageMimeTypeForPath(widget.imageFile.path),
+          ),
+        ),
+      );
+
+    final response = await request.send();
+    final body = await response.stream.bytesToString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    if (response.statusCode < 200 ||
+        response.statusCode >= 300 ||
+        data['success'] != true) {
+      throw Exception(data['message'] ?? 'AI Scan is temporarily unavailable.');
+    }
+    return data;
+  }
+
+  Future<void> _loadAnalysis() async {
+    try {
+      final data = await _requestChat(
+        'Analyze this animal image. Identify the species, visible condition, severity, and appropriate first aid.',
+      );
+      if (!mounted) return;
+      setState(() {
+        _result = _resultFromResponse(data);
+      });
+      _seedConversation(data['reply']?.toString() ?? '');
+      _scrollToBottom();
+    } catch (error) {
+      if (!mounted) return;
+      _addMessage(_ChatMsg(
+        type: _MsgType.botText,
+        time: _now,
+        text: error.toString().replaceFirst('Exception: ', ''),
+      ));
+    }
+  }
+
+  InjuryResult _resultFromResponse(Map<String, dynamic> data) {
+    return InjuryResult(
+      title: data['condition']?.toString() ?? 'Visible condition assessment',
+      severity: data['severity']?.toString() ?? 'Medium',
+      description:
+          data['description']?.toString() ?? 'No visible details returned.',
+      animalType: data['animalType']?.toString() ?? 'Unknown',
+      condition:
+          data['condition']?.toString() ?? 'No visible condition identified.',
+      firstAid: data['firstAid']?.toString() ?? '',
+      confidence: int.tryParse(data['confidence']?.toString() ?? '') ?? 0,
+      speciesVerifiedBy: data['speciesVerifiedBy']?.toString() ?? 'gemini',
+    );
   }
 
   void _scrollToBottom() {
@@ -151,35 +251,21 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
 
   // ───────────────────────── Quick action handling ─────────────────────────
 
-  void _handleQuickAction(String action) {
+  Future<void> _handleQuickAction(String action) async {
+    if (_isSending) return;
+
     switch (action) {
       case 'report':
-        _addMessage(_ChatMsg(type: _MsgType.userText, time: _now, text: 'Create a report'));
         _addMessage(_ChatMsg(
-          type: _MsgType.botText,
-          time: _now,
-          text: "Got it — I'll put together a report with the photo and "
-              "detection details so you can submit it to a nearby NGO.",
-        ));
-        // TODO: hook up to real report-submission flow / API.
+            type: _MsgType.userText, time: _now, text: 'Create a report'));
+        await _sendToAssistant(
+            'How do I create a Report Rescue report from this scan?');
         break;
 
       case 'guidance':
-        _addMessage(_ChatMsg(type: _MsgType.userText, time: _now, text: 'What should I do?'));
         _addMessage(_ChatMsg(
-          type: _MsgType.botText,
-          time: _now,
-          text: 'If the animal is safe, try to keep it calm and avoid '
-              'touching the injured area. Contact a nearby rescue or vet '
-              'as soon as possible.',
-        ));
-        _addMessage(_ChatMsg(type: _MsgType.guidanceFeedback, time: _now));
-        _addMessage(_ChatMsg(
-          type: _MsgType.botText,
-          time: _now,
-          text: 'Need help finding a rescue organization near you?',
-        ));
-        _addMessage(_ChatMsg(type: _MsgType.locationPrompt, time: _now));
+            type: _MsgType.userText, time: _now, text: 'What should I do?'));
+        await _sendToAssistant('What should I do for this animal?');
         break;
 
       case 'rescan':
@@ -188,20 +274,61 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
     }
   }
 
-  void _handleSend() {
+  Future<void> _handleSend() async {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
 
     _addMessage(_ChatMsg(type: _MsgType.userText, time: _now, text: text));
     _inputController.clear();
 
-    // TODO: replace with a real response from the AI backend.
-    _addMessage(_ChatMsg(
+    await _sendToAssistant(text);
+  }
+
+  Future<void> _sendToAssistant(String message) async {
+    if (_isSending) return;
+
+    final typingMessage = _ChatMsg(
       type: _MsgType.botText,
       time: _now,
-      text: "Thanks — I've noted that. Let me know if you'd like a report "
-          "or nearby rescue options.",
-    ));
+      isTyping: true,
+    );
+    setState(() {
+      _isSending = true;
+      _messages.add(typingMessage);
+    });
+    _scrollToBottom();
+
+    try {
+      final data = await _requestChat(message);
+      if (!mounted) return;
+      setState(() {
+        _result = _resultFromResponse(data);
+        final index = _messages.indexOf(typingMessage);
+        if (index != -1) {
+          _messages[index] = _ChatMsg(
+            type: _MsgType.botText,
+            time: typingMessage.time,
+            text: data['reply']?.toString() ?? 'Gemini did not return a reply.',
+          );
+        }
+        _isSending = false;
+      });
+      _scrollToBottom();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        final index = _messages.indexOf(typingMessage);
+        if (index != -1) {
+          _messages[index] = _ChatMsg(
+            type: _MsgType.botText,
+            time: typingMessage.time,
+            text: "Sorry, I couldn't process that request. Please try again.",
+          );
+        }
+        _isSending = false;
+      });
+      _scrollToBottom();
+    }
   }
 
   // ───────────────────────── Build ─────────────────────────
@@ -245,7 +372,8 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
         children: [
           IconButton(
             onPressed: () => Navigator.maybePop(context),
-            icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
+            icon: const Icon(Icons.arrow_back_ios_new,
+                color: Colors.white, size: 18),
           ),
           Expanded(
             child: Column(
@@ -261,7 +389,9 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
                 const SizedBox(height: 2),
                 Text(
                   'Here to help animals',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 12.5),
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.55),
+                      fontSize: 12.5),
                 ),
               ],
             ),
@@ -281,7 +411,8 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
       child: Center(
         child: Text(
           'Today, ${_messages.isNotEmpty ? _messages.first.time : _now}',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12.5),
+          style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.4), fontSize: 12.5),
         ),
       ),
     );
@@ -292,7 +423,9 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
   Widget _buildMessage(_ChatMsg msg) {
     switch (msg.type) {
       case _MsgType.botText:
-        return _botBubble(msg.text!, msg.time);
+        return msg.isTyping
+            ? _typingBubble(msg.time)
+            : _botBubble(msg.text!, msg.time);
       case _MsgType.userText:
         return _userBubble(msg.text!, msg.time);
       case _MsgType.analysisCard:
@@ -335,7 +468,8 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: const BoxDecoration(
                     color: kBubble,
                     borderRadius: BorderRadius.only(
@@ -347,13 +481,99 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
                   ),
                   child: Text(
                     text,
-                    style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.35),
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 14, height: 1.35),
                   ),
                 ),
                 const SizedBox(height: 4),
                 Padding(
                   padding: const EdgeInsets.only(left: 4),
-                  child: Text(time, style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
+                  child: Text(time,
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.35),
+                          fontSize: 11)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _typingBubble(String time) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _botAvatar(),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
+                  ),
+                  decoration: const BoxDecoration(
+                    color: kBubble,
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(4),
+                      topRight: Radius.circular(16),
+                      bottomLeft: Radius.circular(16),
+                      bottomRight: Radius.circular(16),
+                    ),
+                  ),
+                  child: AnimatedBuilder(
+                    animation: _typingController,
+                    builder: (context, child) {
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: List.generate(3, (index) {
+                          final phase =
+                              (_typingController.value - index * 0.16) % 1.0;
+                          final opacity = 0.35 +
+                              0.65 *
+                                  math.max(
+                                    0,
+                                    math.sin(phase * math.pi * 2),
+                                  );
+                          return Padding(
+                            padding: EdgeInsets.only(
+                              right: index == 2 ? 0 : 5,
+                            ),
+                            child: Opacity(
+                              opacity: opacity,
+                              child: const SizedBox(
+                                width: 7,
+                                height: 7,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: kPurpleLight,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: Text(
+                    time,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.35),
+                      fontSize: 11,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -375,9 +595,11 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: const BoxDecoration(
-                    gradient: LinearGradient(colors: [Color(0xFF8A4FC7), kPurple]),
+                    gradient:
+                        LinearGradient(colors: [Color(0xFF8A4FC7), kPurple]),
                     borderRadius: BorderRadius.only(
                       topLeft: Radius.circular(16),
                       topRight: Radius.circular(4),
@@ -385,7 +607,9 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
                       bottomRight: Radius.circular(16),
                     ),
                   ),
-                  child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.35)),
+                  child: Text(text,
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 14, height: 1.35)),
                 ),
                 const SizedBox(height: 4),
                 Padding(
@@ -393,9 +617,13 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(time, style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
+                      Text(time,
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.35),
+                              fontSize: 11)),
                       const SizedBox(width: 4),
-                      Icon(Icons.done_all, size: 14, color: kPurpleLight.withValues(alpha: 0.8)),
+                      Icon(Icons.done_all,
+                          size: 14, color: kPurpleLight.withValues(alpha: 0.8)),
                     ],
                   ),
                 ),
@@ -410,7 +638,7 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
   // ───────────────────────── Analysis card ─────────────────────────
 
   Widget _analysisCard(String time) {
-    final file = File(widget.imagePath);
+    final file = widget.imageFile;
     return Padding(
       padding: const EdgeInsets.only(bottom: 14, left: 42),
       child: Column(
@@ -430,7 +658,8 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: file.existsSync()
-                      ? Image.file(file, width: 96, height: 96, fit: BoxFit.cover)
+                      ? Image.file(file,
+                          width: 96, height: 96, fit: BoxFit.cover)
                       : Container(
                           width: 96,
                           height: 96,
@@ -454,7 +683,8 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
                       const SizedBox(height: 4),
                       RichText(
                         text: TextSpan(
-                          style: const TextStyle(fontSize: 12.5, color: Colors.white70),
+                          style: const TextStyle(
+                              fontSize: 12.5, color: Colors.white70),
                           children: [
                             const TextSpan(text: 'Severity: '),
                             TextSpan(
@@ -470,7 +700,8 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
                       const SizedBox(height: 6),
                       Text(
                         _result.description,
-                        style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.35),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12, height: 1.35),
                       ),
                     ],
                   ),
@@ -479,7 +710,9 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
             ),
           ),
           const SizedBox(height: 4),
-          Text(time, style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
+          Text(time,
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
         ],
       ),
     );
@@ -551,7 +784,8 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
               const SizedBox(height: 2),
               Text(
                 subtitle,
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 10.5),
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.5), fontSize: 10.5),
               ),
             ],
           ),
@@ -580,7 +814,9 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
             if (msg.feedbackGiven) ...[
               const SizedBox(width: 8),
               Text('Thanks for the feedback!',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.4),
+                      fontSize: 11)),
             ],
           ],
         ),
@@ -614,7 +850,10 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
             label: 'Yes, show nearby',
             onTap: () {
               setState(() => msg.locationResolved = true);
-              _addMessage(_ChatMsg(type: _MsgType.userText, time: _now, text: 'Yes, show nearby'));
+              _addMessage(_ChatMsg(
+                  type: _MsgType.userText,
+                  time: _now,
+                  text: 'Yes, show nearby'));
               _addMessage(_ChatMsg(
                 type: _MsgType.botText,
                 time: _now,
@@ -628,7 +867,8 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
             label: 'No, thanks',
             onTap: () {
               setState(() => msg.locationResolved = true);
-              _addMessage(_ChatMsg(type: _MsgType.userText, time: _now, text: 'No, thanks'));
+              _addMessage(_ChatMsg(
+                  type: _MsgType.userText, time: _now, text: 'No, thanks'));
               _addMessage(_ChatMsg(
                 type: _MsgType.botText,
                 time: _now,
@@ -641,7 +881,8 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
     );
   }
 
-  Widget _promptButton({IconData? icon, required String label, required VoidCallback onTap}) {
+  Widget _promptButton(
+      {IconData? icon, required String label, required VoidCallback onTap}) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -660,7 +901,11 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
                 Icon(icon, size: 14, color: kPurpleLight),
                 const SizedBox(width: 6),
               ],
-              Text(label, style: const TextStyle(color: kPurpleLight, fontSize: 12.5, fontWeight: FontWeight.w600)),
+              Text(label,
+                  style: const TextStyle(
+                      color: kPurpleLight,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600)),
             ],
           ),
         ),
@@ -690,11 +935,12 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
               child: TextField(
                 controller: _inputController,
                 style: const TextStyle(color: Colors.white, fontSize: 14),
-                onSubmitted: (_) => _handleSend(),
+                onSubmitted: _isSending ? null : (_) => _handleSend(),
                 decoration: InputDecoration(
                   border: InputBorder.none,
                   hintText: 'Type a message...',
-                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+                  hintStyle:
+                      TextStyle(color: Colors.white.withValues(alpha: 0.35)),
                 ),
               ),
             ),
@@ -705,16 +951,24 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen> {
             shape: const CircleBorder(),
             child: InkWell(
               customBorder: const CircleBorder(),
-              onTap: _handleSend,
+              onTap: _isSending ? null : _handleSend,
               child: Container(
                 width: 44,
                 height: 44,
                 alignment: Alignment.center,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: LinearGradient(colors: [Color(0xFF8A4FC7), kPurple]),
+                  gradient: LinearGradient(
+                    colors: _isSending
+                        ? [const Color(0xFF49365F), const Color(0xFF332442)]
+                        : [const Color(0xFF8A4FC7), kPurple],
+                  ),
                 ),
-                child: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                child: Icon(
+                  Icons.send_rounded,
+                  color: _isSending ? Colors.white38 : Colors.white,
+                  size: 20,
+                ),
               ),
             ),
           ),

@@ -5,7 +5,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:http_parser/http_parser.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:straycare_splash/utils/image_upload.dart';
 import 'notification_screen.dart';
 
 /// StrayCare "AI Analysis & Priority" screen — runs AFTER the report form
@@ -40,6 +43,9 @@ import 'notification_screen.dart';
 /// //   your submit/Review flow.
 /// ```
 class AiAnalysisScreen extends StatefulWidget {
+  final DateTime foundDate;
+  final TimeOfDay foundTime;
+
   const AiAnalysisScreen({
     super.key,
     required this.photos,
@@ -48,6 +54,8 @@ class AiAnalysisScreen extends StatefulWidget {
     required this.behaviors,
     required this.description,
     required this.location,
+    required this.foundDate,
+    required this.foundTime,
     this.dateLabel,
     this.timeLabel,
     this.distanceLabel,
@@ -71,6 +79,8 @@ enum AiPriority { critical, high, medium, low }
 
 class AiAnalysisResult {
   const AiAnalysisResult({
+    required this.animalType,
+    required this.condition,
     required this.priority,
     required this.score,
     required this.imageFindings,
@@ -80,6 +90,8 @@ class AiAnalysisResult {
     required this.duplicateFound,
   });
 
+  final String animalType;
+  final String condition;
   final AiPriority priority;
   final int score; // 0-100
   final List<String> imageFindings;
@@ -155,7 +167,13 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
       )
         ..headers['Authorization'] = 'Bearer $token'
         ..files.add(
-          await http.MultipartFile.fromPath('image', widget.photos.first.path),
+          await http.MultipartFile.fromPath(
+            'image',
+            widget.photos.first.path,
+            contentType: MediaType.parse(
+              imageMimeTypeForPath(widget.photos.first.path),
+            ),
+          ),
         );
 
       final streamedResponse = await request.send().timeout(
@@ -213,7 +231,9 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
   /// model observed visually vs. its written assessment/recommendation.
   AiAnalysisResult _mapServerResponseToResult(Map<String, dynamic> data) {
     final animalType = (data['animalType'] as String?)?.trim() ?? '';
-    final injuryType = (data['injuryType'] as String?)?.trim() ?? '';
+    final injuryType = (data['condition'] as String?)?.trim() ??
+        (data['injuryType'] as String?)?.trim() ??
+        '';
     final severityRaw = (data['severity'] as String?) ?? 'Medium';
     final confidence = _asInt(data['confidence']) ?? 50;
     final description = (data['description'] as String?)?.trim() ?? '';
@@ -245,6 +265,10 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
     }
 
     return AiAnalysisResult(
+      animalType: animalType.isNotEmpty ? animalType : 'Unknown',
+      condition: injuryType.isNotEmpty
+          ? injuryType
+          : 'No visible condition identified.',
       priority: priority,
       score: score,
       imageFindings: imageFindings,
@@ -331,44 +355,18 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
     }
   }
 
-  // ───────────────────────── Meta fallbacks ─────────────────────────
-  // If the caller (report_screen.dart) doesn't pass dateLabel/timeLabel,
-  // fall back to "now" instead of showing a blank/dash. For an accurate
-  // "found at" time, pass dateLabel/timeLabel explicitly when navigating
-  // here, e.g.:
-  //   AiAnalysisScreen(
-  //     ...,
-  //     dateLabel: _formattedDate,
-  //     timeLabel: _formattedTime,
-  //   )
-
   String _resolvedTimeLabel(BuildContext context) {
     if (widget.timeLabel != null && widget.timeLabel!.trim().isNotEmpty) {
       return widget.timeLabel!;
     }
-    return TimeOfDay.now().format(context);
+    return widget.foundTime.format(context);
   }
 
   String _resolvedDateLabel() {
     if (widget.dateLabel != null && widget.dateLabel!.trim().isNotEmpty) {
       return widget.dateLabel!;
     }
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    final now = DateTime.now();
-    return '${months[now.month - 1]} ${now.day}, ${now.year}';
+    return DateFormat('MMM d, yyyy').format(widget.foundDate);
   }
 
   // ───────────────────────── Actions ─────────────────────────
@@ -859,8 +857,8 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
               Expanded(
                 child: _MetaChip(
                   icon: Icons.access_time,
-                  primary: widget.timeLabel ?? '—',
-                  secondary: widget.dateLabel,
+                  primary: _resolvedTimeLabel(context),
+                  secondary: _resolvedDateLabel(),
                 ),
               ),
             ],

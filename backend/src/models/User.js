@@ -38,7 +38,8 @@ const userSchema = new mongoose.Schema(
     },
     partnerStatus: {
       type: String,
-      enum: ['pending', 'approved', 'rejected'],
+      enum: ['none', 'pending', 'approved', 'rejected'],
+      default: 'none',
     },
 
     // Email verification

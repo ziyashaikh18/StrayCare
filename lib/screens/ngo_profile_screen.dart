@@ -53,13 +53,12 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
       _name = prefs.getString('user_name') ?? _name;
       _email = prefs.getString('user_email') ?? _email;
       _phone = prefs.getString('user_phone') ?? _phone;
-        _location = prefs.getString('user_address') ??
+      _location = prefs.getString('user_address') ??
           prefs.getString('user_location') ??
           _location;
       _role = (prefs.getString('role') ?? 'ngo').toUpperCase();
-        _organization =
-          prefs.getString('organizationName') ?? _organization;
-        _isNgo = prefs.getString('role') == 'ngo';
+      _organization = prefs.getString('organizationName') ?? _organization;
+      _isNgo = prefs.getString('role') == 'ngo';
     });
 
     await _loadStatistics(prefs.getString('token') ?? '');
@@ -87,7 +86,9 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
         if (report is! Map) continue;
         final status = report['status']?.toString().toLowerCase();
         if (status == 'assigned') assigned++;
-        if (status == 'inreview' || status == 'in_review' || status == 'inprogress') {
+        if (status == 'inreview' ||
+            status == 'in_review' ||
+            status == 'inprogress') {
           inReview++;
         }
         if (status == 'resolved') resolved++;
@@ -200,18 +201,26 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
                 icon: Icons.apartment_outlined,
                 value: _organization,
               ),
+              if (_isNgo) ...[
+                const SizedBox(height: 16),
+                _PartnershipCard(
+                  organization: _organization,
+                  onRemove: _confirmRemovePartnership,
+                ),
+              ],
               const SizedBox(height: 16),
               _ActionCard(
                 onNotifications: _openNotifications,
                 onHelp: _openHelpSupport,
-                onSettings: () => _showUnavailable('Settings are not configured yet.'),
+                onSettings: () =>
+                    _showUnavailable('Settings are not configured yet.'),
                 onLogout: _openLogoutConfirmation,
                 onSwitchToCitizen: _isNgo
-                  ? () => Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const HomeScreen()),
-                      (route) => route.isFirst,
-                    )
-                  : null,
+                    ? () => Navigator.of(context).pushAndRemoveUntil(
+                          MaterialPageRoute(builder: (_) => const HomeScreen()),
+                          (route) => route.isFirst,
+                        )
+                    : null,
               ),
             ],
           ),
@@ -221,7 +230,67 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
   }
 
   void _showUnavailable(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _confirmRemovePartnership() async {
+    final shouldRemove = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove NGO Partnership?'),
+        content: const Text(
+          'You will stop being an NGO partner and this account will immediately become a normal Reporter account. Your reports and account history will remain.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text(
+              'Remove Partnership',
+              style: TextStyle(color: NgoProfileScreen.kPink),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldRemove != true || !mounted) return;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final response = await http.post(
+        Uri.parse('$_apiBaseUrl/api/ngo/remove-partnership'),
+        headers: {
+          'Content-Type': 'application/json',
+          if (prefs.getString('token')?.isNotEmpty == true)
+            'Authorization': 'Bearer ${prefs.getString('token')}',
+        },
+      );
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          data['success'] != true) {
+        throw Exception(data['message'] ?? 'Could not remove partnership');
+      }
+
+      await prefs.setString('role', 'reporter');
+      await prefs.setString('partner_status', 'none');
+      await prefs.remove('organizationName');
+
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (route) => false,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showUnavailable(error.toString().replaceFirst('Exception: ', ''));
+    }
   }
 }
 
@@ -236,7 +305,8 @@ class _Header extends StatelessWidget {
       children: [
         IconButton(
           onPressed: onBack ?? () => Navigator.maybePop(context),
-          icon: const Icon(Icons.arrow_back, color: NgoProfileScreen.kDeepPurple),
+          icon:
+              const Icon(Icons.arrow_back, color: NgoProfileScreen.kDeepPurple),
         ),
         const Expanded(
           child: Column(
@@ -252,12 +322,14 @@ class _Header extends StatelessWidget {
               ),
               Text(
                 'Rescue team account and activity',
-                style: TextStyle(fontSize: 13.5, color: NgoProfileScreen.kSubtitleGray),
+                style: TextStyle(
+                    fontSize: 13.5, color: NgoProfileScreen.kSubtitleGray),
               ),
             ],
           ),
         ),
-        const Icon(Icons.shield_outlined, color: NgoProfileScreen.kPurple, size: 28),
+        const Icon(Icons.shield_outlined,
+            color: NgoProfileScreen.kPurple, size: 28),
       ],
     );
   }
@@ -286,7 +358,8 @@ class _IdentityCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: const [
-          BoxShadow(color: Color(0x14000000), blurRadius: 14, offset: Offset(0, 6)),
+          BoxShadow(
+              color: Color(0x14000000), blurRadius: 14, offset: Offset(0, 6)),
         ],
       ),
       child: Row(
@@ -299,7 +372,8 @@ class _IdentityCard extends StatelessWidget {
               shape: BoxShape.circle,
               color: Color(0xFFF1E7F7),
             ),
-            child: const Icon(Icons.person_outline, color: NgoProfileScreen.kPurple, size: 32),
+            child: const Icon(Icons.person_outline,
+                color: NgoProfileScreen.kPurple, size: 32),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -381,7 +455,8 @@ class _ContactLine extends StatelessWidget {
               text,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12.5, color: NgoProfileScreen.kSubtitleGray),
+              style: const TextStyle(
+                  fontSize: 12.5, color: NgoProfileScreen.kSubtitleGray),
             ),
           ),
         ],
@@ -429,16 +504,29 @@ class _StatsCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: const [
-          BoxShadow(color: Color(0x14000000), blurRadius: 14, offset: Offset(0, 6)),
+          BoxShadow(
+              color: Color(0x14000000), blurRadius: 14, offset: Offset(0, 6)),
         ],
       ),
       child: Row(
         children: [
-          _Stat(value: assigned, label: 'Assigned cases', color: NgoProfileScreen.kPurple, loading: loading),
+          _Stat(
+              value: assigned,
+              label: 'Assigned cases',
+              color: NgoProfileScreen.kPurple,
+              loading: loading),
           const _Divider(),
-          _Stat(value: inReview, label: 'In review', color: const Color(0xFFE8A23D), loading: loading),
+          _Stat(
+              value: inReview,
+              label: 'In review',
+              color: const Color(0xFFE8A23D),
+              loading: loading),
           const _Divider(),
-          _Stat(value: resolved, label: 'Resolved', color: const Color(0xFF3FAE5C), loading: loading),
+          _Stat(
+              value: resolved,
+              label: 'Resolved',
+              color: const Color(0xFF3FAE5C),
+              loading: loading),
         ],
       ),
     );
@@ -446,7 +534,11 @@ class _StatsCard extends StatelessWidget {
 }
 
 class _Stat extends StatelessWidget {
-  const _Stat({required this.value, required this.label, required this.color, required this.loading});
+  const _Stat(
+      {required this.value,
+      required this.label,
+      required this.color,
+      required this.loading});
 
   final int value;
   final String label;
@@ -462,10 +554,16 @@ class _Stat extends StatelessWidget {
           const SizedBox(height: 7),
           Text(
             loading ? '-' : '$value',
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: NgoProfileScreen.kDeepPurple),
+            style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: NgoProfileScreen.kDeepPurple),
           ),
           const SizedBox(height: 3),
-          Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 10.5, color: NgoProfileScreen.kSubtitleGray)),
+          Text(label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 10.5, color: NgoProfileScreen.kSubtitleGray)),
         ],
       ),
     );
@@ -476,11 +574,13 @@ class _Divider extends StatelessWidget {
   const _Divider();
 
   @override
-  Widget build(BuildContext context) => Container(width: 1, height: 56, color: const Color(0xFFEFE4F6));
+  Widget build(BuildContext context) =>
+      Container(width: 1, height: 56, color: const Color(0xFFEFE4F6));
 }
 
 class _InfoCard extends StatelessWidget {
-  const _InfoCard({required this.title, required this.icon, required this.value});
+  const _InfoCard(
+      {required this.title, required this.icon, required this.value});
 
   final String title;
   final IconData icon;
@@ -502,9 +602,15 @@ class _InfoCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: NgoProfileScreen.kDeepPurple)),
+                Text(title,
+                    style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                        color: NgoProfileScreen.kDeepPurple)),
                 const SizedBox(height: 4),
-                Text(value, style: const TextStyle(fontSize: 12, color: NgoProfileScreen.kSubtitleGray)),
+                Text(value,
+                    style: const TextStyle(
+                        fontSize: 12, color: NgoProfileScreen.kSubtitleGray)),
               ],
             ),
           ),
@@ -514,8 +620,81 @@ class _InfoCard extends StatelessWidget {
   }
 }
 
+class _PartnershipCard extends StatelessWidget {
+  const _PartnershipCard({required this.organization, required this.onRemove});
+
+  final String organization;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE6D5ED)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.verified_outlined, color: Color(0xFF2E7D32)),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'NGO Partnership',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: NgoProfileScreen.kDeepPurple),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                decoration: BoxDecoration(
+                    color: const Color(0xFFE5F5EA),
+                    borderRadius: BorderRadius.circular(20)),
+                child: const Text('Approved',
+                    style: TextStyle(
+                        color: Color(0xFF2E7D32),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(organization,
+              style: const TextStyle(color: NgoProfileScreen.kSubtitleGray)),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: onRemove,
+            icon: const Icon(Icons.link_off,
+                color: NgoProfileScreen.kPink, size: 18),
+            label: const Text('Remove NGO Partnership',
+                style: TextStyle(
+                    color: NgoProfileScreen.kPink,
+                    fontWeight: FontWeight.w700)),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: NgoProfileScreen.kPink),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ActionCard extends StatelessWidget {
-  const _ActionCard({required this.onNotifications, required this.onHelp, required this.onSettings, required this.onLogout, this.onSwitchToCitizen});
+  const _ActionCard(
+      {required this.onNotifications,
+      required this.onHelp,
+      required this.onSettings,
+      required this.onLogout,
+      this.onSwitchToCitizen});
 
   final VoidCallback onNotifications;
   final VoidCallback onHelp;
@@ -530,22 +709,48 @@ class _ActionCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: const [
-          BoxShadow(color: Color(0x14000000), blurRadius: 14, offset: Offset(0, 6)),
+          BoxShadow(
+              color: Color(0x14000000), blurRadius: 14, offset: Offset(0, 6)),
         ],
       ),
       child: Column(
         children: [
           if (onSwitchToCitizen != null) ...[
-            _Action(icon: Icons.swap_horiz, title: 'Switch to Citizen Mode', subtitle: 'Open the normal reporter experience', onTap: onSwitchToCitizen!),
-            const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
+            _Action(
+                icon: Icons.swap_horiz,
+                title: 'Switch to Citizen Mode',
+                subtitle: 'Open the normal reporter experience',
+                onTap: onSwitchToCitizen!),
+            const Divider(
+                height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
           ],
-          _Action(icon: Icons.notifications_none_rounded, title: 'Notifications', subtitle: 'Manage operations alerts', onTap: onNotifications),
-          const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
-          _Action(icon: Icons.help_outline_rounded, title: 'Help & Support', subtitle: 'Find rescue operations help', onTap: onHelp),
-          const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
-          _Action(icon: Icons.settings_outlined, title: 'Settings', subtitle: 'Manage account settings', onTap: onSettings),
-          const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
-          _Action(icon: Icons.logout, title: 'Log Out', subtitle: 'Sign out from this account', color: NgoProfileScreen.kPink, onTap: onLogout),
+          _Action(
+              icon: Icons.notifications_none_rounded,
+              title: 'Notifications',
+              subtitle: 'Manage operations alerts',
+              onTap: onNotifications),
+          const Divider(
+              height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
+          _Action(
+              icon: Icons.help_outline_rounded,
+              title: 'Help & Support',
+              subtitle: 'Find rescue operations help',
+              onTap: onHelp),
+          const Divider(
+              height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
+          _Action(
+              icon: Icons.settings_outlined,
+              title: 'Settings',
+              subtitle: 'Manage account settings',
+              onTap: onSettings),
+          const Divider(
+              height: 1, indent: 16, endIndent: 16, color: Color(0xFFF0E6F5)),
+          _Action(
+              icon: Icons.logout,
+              title: 'Log Out',
+              subtitle: 'Sign out from this account',
+              color: NgoProfileScreen.kPink,
+              onTap: onLogout),
         ],
       ),
     );
@@ -553,7 +758,12 @@ class _ActionCard extends StatelessWidget {
 }
 
 class _Action extends StatelessWidget {
-  const _Action({required this.icon, required this.title, required this.subtitle, required this.onTap, this.color = NgoProfileScreen.kDeepPurple});
+  const _Action(
+      {required this.icon,
+      required this.title,
+      required this.subtitle,
+      required this.onTap,
+      this.color = NgoProfileScreen.kDeepPurple});
 
   final IconData icon;
   final String title;
@@ -576,13 +786,21 @@ class _Action extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: color)),
+                  Text(title,
+                      style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                          color: color)),
                   const SizedBox(height: 2),
-                  Text(subtitle, style: const TextStyle(fontSize: 11.5, color: NgoProfileScreen.kSubtitleGray)),
+                  Text(subtitle,
+                      style: const TextStyle(
+                          fontSize: 11.5,
+                          color: NgoProfileScreen.kSubtitleGray)),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: color.withValues(alpha: 0.6), size: 20),
+            Icon(Icons.chevron_right,
+                color: color.withValues(alpha: 0.6), size: 20),
           ],
         ),
       ),

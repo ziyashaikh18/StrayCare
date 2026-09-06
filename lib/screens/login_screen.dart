@@ -43,96 +43,122 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _handleLogin() async {
-  try {
-    final response = await http.post(
-      Uri.parse("${ApiConfig.baseUrl}/api/auth/login"),
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: jsonEncode({
-        "email": _emailController.text.trim(),
-        "password": _passwordController.text.trim(),
-      }),
-    );
+    try {
+      final response = await http.post(
+        Uri.parse("${ApiConfig.baseUrl}/api/auth/login"),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({
+          "email": _emailController.text.trim(),
+          "password": _passwordController.text.trim(),
+        }),
+      );
 
-    final data = jsonDecode(response.body);
+      final data = jsonDecode(response.body);
 
-    if (response.statusCode == 200 && data["success"] == true) {
-      // Save JWT token and role
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString("token", data["data"]["token"]);
+      if (response.statusCode == 200 && data["success"] == true) {
+        final prefs = await SharedPreferences.getInstance();
+        for (final key in [
+          'token',
+          'userId',
+          'role',
+          'name',
+          'email',
+          'user_name',
+          'user_email',
+          'user_phone',
+          'user_location',
+          'user_address',
+          'organizationName',
+          'partner_status',
+          'profile_image',
+        ]) {
+          await prefs.remove(key);
+        }
 
-      final role = data["data"]?["user"]?["role"] as String?;
-      if (role != null) {
-        await prefs.setString("role", role);
-      }
-      final user = data["data"]?["user"];
-      if (user is Map) {
-        final userFields = <String, String>{
-          "user_name": user["name"]?.toString() ?? "",
-          "user_email": user["email"]?.toString() ?? "",
-          "user_phone": user["phone"]?.toString() ?? "",
-          "user_location": user["location"]?.toString() ?? "",
-          "organizationName": user["organizationName"]?.toString() ?? "",
-          "user_address": user["address"]?.toString() ?? "",
-          "partner_status": user["partnerStatus"]?.toString() ?? "",
-        };
-        for (final entry in userFields.entries) {
-          if (entry.value.isNotEmpty) {
-            await prefs.setString(entry.key, entry.value);
-          } else {
-            await prefs.remove(entry.key);
+        await prefs.setString("token", data["data"]["token"]);
+
+        final user = data["data"]?["user"];
+        final role = user is Map ? user["role"]?.toString() : null;
+        if (user is Map) {
+          final userId = user["id"]?.toString() ?? user["_id"]?.toString();
+          final name = user["name"]?.toString() ?? "";
+          final email = user["email"]?.toString() ?? "";
+          if (userId != null && userId.isNotEmpty) {
+            await prefs.setString("userId", userId);
+          }
+          if (role != null && role.isNotEmpty) {
+            await prefs.setString("role", role);
+          }
+          await prefs.setString("name", name);
+          await prefs.setString("email", email);
+
+          final userFields = <String, String>{
+            "user_name": name,
+            "user_email": email,
+            "user_phone": user["phone"]?.toString() ?? "",
+            "user_location": user["location"]?.toString() ?? "",
+            "organizationName": user["organizationName"]?.toString() ?? "",
+            "user_address": user["address"]?.toString() ?? "",
+            "partner_status": user["partnerStatus"]?.toString() ?? "",
+          };
+          for (final entry in userFields.entries) {
+            if (entry.value.isNotEmpty) {
+              await prefs.setString(entry.key, entry.value);
+            } else {
+              await prefs.remove(entry.key);
+            }
           }
         }
-      }
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      if (role == "admin") {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const AdminHomeScreen(),
-          ),
-        );
-      } else if (role == "ngo") {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const NgoHomeScreen(),
-          ),
-        );
-      } else if (role == "reporter") {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const HomeScreen(),
-          ),
-        );
+        if (role == "admin") {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const AdminHomeScreen(),
+            ),
+          );
+        } else if (role == "ngo") {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const NgoHomeScreen(),
+            ),
+          );
+        } else if (role == "reporter") {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const HomeScreen(),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Unsupported account role")),
+          );
+        }
       } else {
+        if (!mounted) return;
+
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Unsupported account role")),
+          SnackBar(
+            content: Text(data["message"] ?? "Login failed"),
+          ),
         );
       }
-    } else {
+    } catch (e) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(data["message"] ?? "Login failed"),
+          content: Text("Cannot connect to backend: $e"),
         ),
       );
     }
-  } catch (e) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("Cannot connect to backend: $e"),
-      ),
-    );
   }
-}
 
   void _handleGoogleSignIn() {
     // Wire up Google sign-in here.
@@ -143,22 +169,22 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _goToSignUp() {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => const SignUpScreen(),
-    ),
-  );
-}
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const SignUpScreen(),
+      ),
+    );
+  }
 
   void _goToForgotPassword() {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => const ForgotPasswordScreen(),
-    ),
-  );
-}
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ForgotPasswordScreen(),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -285,26 +311,26 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 20),
 
                         // Social sign-in buttons
-Row(
-  children: [
-    Expanded(
-      child: SocialLoginButton(
-        imagePath: 'assets/images/google.png',
-        label: 'Google',
-        onPressed: _handleGoogleSignIn,
-      ),
-    ),
-    const SizedBox(width: 14),
-    Expanded(
-      child: SocialLoginButton(
-        icon: Icons.apple,
-        label: 'Apple',
-        onPressed: _handleAppleSignIn,
-      ),
-    ),
-  ],
-),
-const SizedBox(height: 26),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: SocialLoginButton(
+                                imagePath: 'assets/images/google.png',
+                                label: 'Google',
+                                onPressed: _handleGoogleSignIn,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: SocialLoginButton(
+                                icon: Icons.apple,
+                                label: 'Apple',
+                                onPressed: _handleAppleSignIn,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 26),
                         // Sign up link
                         GestureDetector(
                           onTap: _goToSignUp,

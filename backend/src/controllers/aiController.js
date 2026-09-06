@@ -1,13 +1,53 @@
 const fs = require('fs');
-const axios = require('axios');
+const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const HF_API_BASE =
-  "https://router.huggingface.co/hf-inference/models/meta-llama/Llama-4-Scout-17B-16E-Instruct";
-
-const HF_TIMEOUT = 30000;
-const HF_TOKEN = process.env.HF_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+const extensionMimeMap = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.heic': 'image/heic',
+  '.heif': 'image/heic',
+};
+
+const supportedImageMimeTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+]);
+
+const getImageMimeType = async (imageBuffer, filename) => {
+  let detectedType;
+
+  try {
+    const { fileTypeFromBuffer } = await import('file-type');
+    detectedType = await fileTypeFromBuffer(imageBuffer);
+  } catch (error) {
+    console.warn('[AI upload] Binary MIME detection failed:', error.message);
+  }
+
+  let mimeType = detectedType?.mime;
+
+  if (mimeType === 'image/heif') {
+    mimeType = 'image/heic';
+  }
+
+  if (!mimeType) {
+    mimeType = extensionMimeMap[path.extname(filename).toLowerCase()];
+  }
+
+  if (!supportedImageMimeTypes.has(mimeType)) {
+    const error = new Error('Unsupported image format');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return mimeType;
+};
 
 /**
  * Validates that the AI response contains all required fields
@@ -70,222 +110,89 @@ const parseAiResponse = (responseText) => {
   }
 
   try {
-    return JSON.parse(text);
+    const data = JSON.parse(text);
+    const severity = ['Low', 'Medium', 'High', 'Critical'].includes(data.severity)
+      ? data.severity
+      : 'Medium';
+    const animalType =
+      typeof data.animalType === 'string' && data.animalType.trim()
+        ? data.animalType.trim()
+        : 'Unknown';
+    const condition =
+      typeof data.condition === 'string' && data.condition.trim()
+        ? data.condition.trim()
+        : typeof data.injuryType === 'string' && data.injuryType.trim()
+          ? data.injuryType.trim()
+          : 'No visible condition identified.';
+    const firstAid =
+      typeof data.firstAid === 'string' && data.firstAid.trim()
+        ? data.firstAid.trim()
+        : typeof data.suggestion === 'string' && data.suggestion.trim()
+          ? data.suggestion.trim()
+          : 'Avoid handling the animal unnecessarily and seek veterinary assessment.';
+    const priorityScore = Number.isFinite(
+      Number(data.priorityScore ?? data.confidence)
+    )
+      ? Math.max(0, Math.min(100, Math.round(Number(data.priorityScore ?? data.confidence))))
+      : 50;
+    const description =
+      typeof data.description === 'string' && data.description.trim()
+        ? data.description.trim()
+        : 'No additional visible details were returned.';
+    const detectedObjects = Array.isArray(data.detectedObjects)
+      ? data.detectedObjects
+      : [];
+
+    return {
+      ...data,
+      animalType,
+      condition,
+      firstAid,
+      priorityScore,
+      severity,
+      description,
+      injuryType: condition,
+      suggestion: firstAid,
+      confidence: priorityScore,
+      detectedObjects,
+    };
   } catch (err) {
     throw new Error(`Invalid JSON response: ${err.message}`);
   }
 };
 
 /**
- * Calls OpenRouter API with the image.
- */
-const callOpenRouter = async (imageBase64, mimeType = 'image/jpeg') => {
-  console.log("OpenRouter key loaded:", !!process.env.OPENROUTER_API_KEY);
-
-  const prompt = `You are an expert veterinary AI assistant. Analyze the uploaded image of a stray animal and provide a detailed assessment.
-
-Return ONLY valid JSON with NO markdown formatting, NO code blocks, and NO additional text. The JSON must be valid and parseable.
-
-JSON Structure:
-{
-  "animalType": "type of animal (e.g., Dog, Cat, Rabbit, etc.)",
-  "injuryType": "description of the injury or condition observed",
-  "severity": "Low | Medium | High | Critical",
-  "confidence": 85,
-  "description": "detailed description of the animal's condition",
-  "suggestion": "recommended next steps for rescue or treatment",
-  "detectedObjects": ["list", "of", "detected", "objects"]
-}
-
-Ensure:
-- confidence is an integer between 0 and 100
-- severity is exactly one of: Low, Medium, High, Critical
-- animalType is a single animal type
-- All fields are present and non-empty
-- Response is pure JSON only`;
-
-  try {
-    const response = await axios.post(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        model: "google/gemma-3-27b-it:free",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:image/jpeg;base64,${imageBase64}`,
-                },
-              },
-            ],
-          },
-        ],
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    if (!response.data || !response.data.choices || !response.data.choices[0]) {
-      throw new Error(`OpenRouter API returned invalid response`);
-    }
-
-    const generatedText = response.data.choices[0].message.content;
-
-    if (!generatedText) {
-      throw new Error('No generated text in OpenRouter response');
-    }
-
-    const parsed = parseAiResponse(generatedText);
-
-    if (!isValidAiResponse(parsed)) {
-      throw new Error(
-        'OpenRouter response missing required fields or invalid structure'
-      );
-    }
-
-    return parsed;
-  } catch (error) {
-    console.error('OpenRouter Error:');
-
-    if (error.response) {
-      console.error('Status:', error.response.status);
-      console.error(
-        'Body:',
-        JSON.stringify(error.response.data, null, 2)
-      );
-    } else {
-      console.error(error.message);
-    }
-
-    throw error;
-  }
-};
-
-/**
- * Calls Hugging Face Inference API with the image.
- */
-const callHuggingFace = async (imageBase64, mimeType) => {
-  const systemPrompt = `You are an expert veterinary AI assistant. Analyze the uploaded image of a stray animal and provide a detailed assessment.
-
-Return ONLY valid JSON with NO markdown formatting, NO code blocks, and NO additional text. The JSON must be valid and parseable.
-
-JSON Structure:
-{
-  "animalType": "type of animal (e.g., Dog, Cat, Rabbit, etc.)",
-  "injuryType": "description of the injury or condition observed",
-  "severity": "Low | Medium | High | Critical",
-  "confidence": 85,
-  "description": "detailed description of the animal's condition",
-  "suggestion": "recommended next steps for rescue or treatment",
-  "detectedObjects": ["list", "of", "detected", "objects"]
-}
-
-Ensure:
-- confidence is an integer between 0 and 100
-- severity is exactly one of: Low, Medium, High, Critical
-- animalType is a single animal type
-- All fields are present and non-empty
-- Response is pure JSON only`;
-
-  try {
-    const response = await axios.post(
-      HF_API_BASE,
-      {
-        model: 'Qwen/Qwen2.5-VL-7B-Instruct',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:${mimeType};base64,${imageBase64}`,
-                },
-              },
-              {
-                type: 'text',
-                text: systemPrompt,
-              },
-            ],
-          },
-        ],
-        max_tokens: 500,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${HF_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: HF_TIMEOUT,
-      }
-    );
-
-    if (!response.data || response.status !== 200) {
-      throw new Error(`HF API returned status ${response.status}`);
-    }
-
-    const generatedText = response.data.choices[0].message.content;
-
-    if (!generatedText) {
-      throw new Error('No generated text in HF response');
-    }
-
-    const parsed = parseAiResponse(generatedText);
-
-    if (!isValidAiResponse(parsed)) {
-      throw new Error(
-        'HF response missing required fields or invalid structure'
-      );
-    }
-
-    return parsed;
-  } catch (error) {
-    console.error('HuggingFace Error:');
-
-    if (error.response) {
-      console.error('Status:', error.response.status);
-      console.error(
-        'Body:',
-        JSON.stringify(error.response.data, null, 2)
-      );
-    } else {
-      console.error(error.message);
-    }
-
-    throw error;
-  }
-};
-
-/**
- * Calls Google Gemini API as a fallback with the image.
+ * Calls Google Gemini API with the image.
  */
 const callGemini = async (imageBase64, mimeType) => {
-  const systemPrompt = `You are an expert veterinary AI assistant. Analyze the uploaded image of a stray animal and provide a detailed assessment.
+  const systemPrompt = `You are an expert veterinary AI assistant. Analyze only the visible evidence in the uploaded image and provide a species-neutral assessment of the animal's visible condition.
 
-Return ONLY valid JSON with NO markdown formatting, NO code blocks, and NO additional text. The JSON must be valid and parseable.
+First identify the species from the image. Never assume the animal is a dog. Do not prioritize dogs. Detect the actual species present in the image. If the uploaded image is a bird, never label it as a dog. If it is a cat, never label it as a dog.
+
+animalType must be exactly one of: Dog, Cat, Bird, Cow, Goat, Monkey, Rabbit, Other, Unknown. Use Unknown if the species cannot be determined confidently. If the image shows a cat, bird, cow, goat, monkey, rabbit, or another animal, return that detected species rather than defaulting to Dog.
+
+Analyze only conditions that are visibly present. Do not invent injuries, symptoms, or details that are not visible. Estimate severity only from visible evidence and use exactly one of: Low, Medium, High, Critical. Generate first-aid advice appropriate for the detected species. If the species is Unknown, give cautious, species-neutral advice and recommend professional veterinary assessment.
+
+Return ONLY valid JSON with NO markdown formatting, NO code blocks, NO explanations, and NO additional text. The JSON must be valid and parseable.
 
 JSON Structure:
 {
-  "animalType": "type of animal (e.g., Dog, Cat, Rabbit, etc.)",
-  "injuryType": "description of the injury or condition observed",
-  "severity": "Low | Medium | High | Critical",
-  "confidence": 85,
-  "description": "detailed description of the animal's condition",
-  "suggestion": "recommended next steps for rescue or treatment",
-  "detectedObjects": ["list", "of", "detected", "objects"]
+  "animalType": "Cat",
+  "injuryType": "Superficial skin abrasion on hind leg.",
+  "severity": "Medium",
+  "confidence": 88,
+  "description": "Visible patchy fur loss and a superficial abrasion on the hind limb with mild inflammation.",
+  "suggestion": "Approach the cat calmly, avoid touching the wound directly, provide clean water if possible, and transport to a veterinary clinic or NGO.",
+  "detectedObjects": ["cat", "hind leg abrasion"]
 }
 
 Ensure:
-- confidence is an integer between 0 and 100
+- confidence is an integer between 0 and 100 representing confidence in the visible assessment
 - severity is exactly one of: Low, Medium, High, Critical
-- animalType is a single animal type
+- animalType is exactly one allowed species value
+- injuryType describes the visible condition only
+- description describes visible evidence only
+- suggestion is species-appropriate first-aid advice
 - All fields are present and non-empty
 - Response is pure JSON only`;
 
@@ -295,6 +202,8 @@ Ensure:
     const model = client.getGenerativeModel({
       model: 'gemini-3.6-flash',
     });
+
+    console.log('[Gemini] Sending image with MIME type:', mimeType);
 
     const response = await model.generateContent([
       {
@@ -306,7 +215,17 @@ Ensure:
       systemPrompt,
     ]);
 
+    console.debug('[Gemini] response metadata:', {
+      promptFeedback: response.response.promptFeedback,
+      candidates: response.response.candidates?.map((candidate) => ({
+        finishReason: candidate.finishReason,
+        safetyRatings: candidate.safetyRatings,
+      })),
+    });
+
     const generatedText = response.response.text();
+
+    console.debug('[Gemini] raw response text:', generatedText);
 
     if (!generatedText) {
       throw new Error('No generated text in Gemini response');
@@ -320,6 +239,8 @@ Ensure:
       );
     }
 
+    console.log('[AI] Final JSON sent to Flutter:', parsed);
+
     return parsed;
   } catch (error) {
     const errorMessage = `Gemini Error: ${error.message}`;
@@ -331,7 +252,7 @@ Ensure:
 /**
  * POST /api/ai/analyze
  * Accepts a multipart image upload and returns AI analysis.
- * Tries Hugging Face first and falls back to Gemini on any error.
+ * Uses Google Gemini to analyze the uploaded image.
  */
 const analyzeImage = async (req, res, next) => {
   try {
@@ -343,82 +264,35 @@ const analyzeImage = async (req, res, next) => {
 
     const imageBuffer = fs.readFileSync(req.file.path);
     const imageBase64 = imageBuffer.toString('base64');
-    const mimeType = req.file.mimetype || 'image/jpeg';
+    const mimeType = await getImageMimeType(
+      imageBuffer,
+      req.file.originalname
+    );
+
+    console.debug('[AI upload] image received:', {
+      fieldname: req.file.fieldname,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      mimeTypeSentToGemini: mimeType,
+      multerSize: req.file.size,
+      bytesReadFromDisk: imageBuffer.length,
+      base64Length: imageBase64.length,
+    });
 
     let analysisResult;
-    let provider = 'openrouter';
 
     try {
-      console.log('AI Provider: Attempting OpenRouter...');
-
-      analysisResult = await callOpenRouter(
+      analysisResult = await callGemini(
         imageBase64,
         mimeType
       );
-
-      console.log('AI Provider: OpenRouter (success)');
-    } catch (openRouterError) {
-      console.warn(
-        'AI Provider: OpenRouter failed, falling back to HuggingFace / Gemini'
+    } catch {
+      const err = new Error(
+        'AI analysis is temporarily unavailable.'
       );
 
-      console.error(
-        'OpenRouter Error Details:',
-        openRouterError.message
-      );
-
-      try {
-        console.log('AI Provider: Attempting HuggingFace (fallback)...');
-
-        analysisResult = await callHuggingFace(
-          imageBase64,
-          mimeType
-        );
-
-        provider = 'huggingface';
-
-        console.log('AI Provider: HuggingFace (fallback - success)');
-      } catch (hfError) {
-        console.warn(
-          'AI Provider: HuggingFace failed, falling back to Gemini'
-        );
-
-        console.error(
-          'HuggingFace Error Details:',
-          hfError.message
-        );
-
-        try {
-          console.log('AI Provider: Attempting Gemini (fallback)...');
-
-          analysisResult = await callGemini(
-            imageBase64,
-            mimeType
-          );
-
-          provider = 'gemini';
-
-          console.log(
-            'AI Provider: Gemini (fallback - success)'
-          );
-        } catch (geminiError) {
-          console.error(
-            'AI Provider: All AI providers (OpenRouter, HuggingFace, Gemini) failed'
-          );
-
-          console.error(
-            'Gemini Error Details:',
-            geminiError.message
-          );
-
-          const err = new Error(
-            'AI analysis is temporarily unavailable.'
-          );
-
-          err.statusCode = 503;
-          throw err;
-        }
-      }
+      err.statusCode = 503;
+      throw err;
     }
 
     fs.unlink(req.file.path, (err) => {
@@ -432,7 +306,6 @@ const analyzeImage = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      provider,
       data: analysisResult,
     });
   } catch (error) {

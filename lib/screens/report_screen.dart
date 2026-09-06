@@ -10,11 +10,13 @@ import 'package:straycare_splash/screens/ai_analysis_screen.dart';
 import 'package:straycare_splash/screens/profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:straycare_splash/screens/ai_scanner_screen.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
 import 'package:straycare_splash/screens/my_report_screen.dart';
 import 'package:straycare_splash/screens/report_submitted_screen.dart';
+import 'package:straycare_splash/utils/image_upload.dart';
 
 /// StrayCare "Report a Rescue" screen — step 1 of 4.
 class ReportRescueScreen extends StatefulWidget {
@@ -261,6 +263,10 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
           behaviors: _behaviors,
           description: _descriptionController.text,
           location: _locationController.text,
+          foundDate: _foundDate,
+          foundTime: _foundTime,
+          dateLabel: _formattedDate,
+          timeLabel: _formattedTime,
         ),
       ),
     );
@@ -289,11 +295,8 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
         Uri.parse('$_apiBaseUrl/api/reports'),
       )
         ..headers['Authorization'] = 'Bearer $token'
-        ..fields['animalType'] =
-            _animalType == 'Other'
-                ? _otherAnimalController.text.trim()
-                : _animalType
-        ..fields['injuryType'] = _condition
+        ..fields['animalType'] = result.animalType
+        ..fields['injuryType'] = result.condition
         ..fields['severity'] = switch (result.priority.name.toLowerCase()) {
           'low' => 'Low',
           'medium' => 'Medium',
@@ -308,15 +311,23 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
       request.fields['longitude'] = _longitude?.toString() ?? '';
 
       request.files.add(
-        await http.MultipartFile.fromPath('image', _photos.first.path),
+        await http.MultipartFile.fromPath(
+          'image',
+          _photos.first.path,
+          contentType: MediaType.parse(
+            imageMimeTypeForPath(_photos.first.path),
+          ),
+        ),
       );
 
       final response = await request.send();
       final responseBody = await response.stream.bytesToString();
+      debugPrint("Report API Status: ${response.statusCode}");
+      debugPrint("Report API Response: $responseBody");
       final data = jsonDecode(responseBody) as Map<String, dynamic>;
       final report = (data['data'] as Map<String, dynamic>?)?['report']
           as Map<String, dynamic>?;
-      final reportId = report?['id']?.toString();
+      final reportId = report?['id']?.toString() ?? report?['_id']?.toString();
 
       if (response.statusCode < 200 ||
           response.statusCode >= 300 ||
@@ -332,10 +343,7 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
         MaterialPageRoute(
           builder: (context) => ReportSubmittedScreen(
             reportId: reportId,
-            animalType:
-                _animalType == 'Other'
-                    ? _otherAnimalController.text.trim()
-                    : _animalType,
+            animalType: result.animalType,
             location: _locationController.text,
             submittedAt: DateTime.now(),
             photoPath: _photos.first.path,
@@ -1357,7 +1365,9 @@ class _CircleIconButton extends StatelessWidget {
   const _CircleIconButton({
     required this.icon,
     required this.onTap,
-  }) : size = 40, margin = null, filled = false;
+  })  : size = 40,
+        margin = null,
+        filled = false;
 
   final IconData icon;
   final VoidCallback onTap;

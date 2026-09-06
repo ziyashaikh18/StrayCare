@@ -1,5 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:straycare_splash/config/api_config.dart';
 
 import 'package:straycare_splash/screens/ai_scanner_screen.dart';
 import 'package:straycare_splash/screens/help_support_screen.dart';
@@ -15,13 +20,13 @@ import 'package:straycare_splash/screens/rescue_points.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
 
 /// StrayCare "My Profile" screen.
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
-    this.userName = 'Ziya Shaikh',
-    this.userEmail = 'ziya.shaikh182650@gmail.com',
-    this.userPhone = '+91 98765 43210',
-    this.userLocation = 'Bandra, Mumbai, India',
+    this.userName = '',
+    this.userEmail = '',
+    this.userPhone = '',
+    this.userLocation = '',
     this.userBadge = 'Rescuer',
     this.reportsSubmitted = 32,
     this.animalsHelped = 18,
@@ -40,6 +45,153 @@ class ProfileScreen extends StatelessWidget {
     this.currentTabIndex = 4,
     this.onTabChanged,
     this.showBottomNav = true,
+  });
+
+  final String userName;
+  final String userEmail;
+  final String userPhone;
+  final String userLocation;
+  final String userBadge;
+  final int reportsSubmitted;
+  final int animalsHelped;
+  final int ongoingCases;
+  final int rescuePoints;
+  final String? avatarAssetPath;
+  final VoidCallback? onBack;
+  final VoidCallback? onSettings;
+  final VoidCallback? onEditAvatar;
+  final VoidCallback? onPersonalInformation;
+  final VoidCallback? onNotifications;
+  final VoidCallback? onMyActivity;
+  final VoidCallback? onRescuePoints;
+  final VoidCallback? onHelpSupport;
+  final VoidCallback? onLogOut;
+  final int currentTabIndex;
+  final void Function(int index)? onTabChanged;
+  final bool showBottomNav;
+
+  static const Color kBackground = Color(0xFFEDE3F5);
+  static const Color kDeepPurple = Color(0xFF2E1A47);
+  static const Color kPurple = Color(0xFF6A3EA1);
+  static const Color kPink = Color(0xFFE0426B);
+  static const Color kSubtitleGray = Color(0xFF8D8398);
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final ImagePicker _picker = ImagePicker();
+  String? profileImagePath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfileImage();
+  }
+
+  Future<void> _loadProfileImage() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => profileImagePath = prefs.getString('profile_image'));
+  }
+
+  Future<void> _pickProfileImage(ImageSource source) async {
+    final image = await _picker.pickImage(source: source, imageQuality: 80);
+    if (image == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('profile_image', image.path);
+    if (!mounted) return;
+    setState(() => profileImagePath = image.path);
+  }
+
+  void _showImagePickerOptions() {
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.purple),
+              title: const Text('Choose from Gallery'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickProfileImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.purple),
+              title: const Text('Take a Photo'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickProfileImage(ImageSource.camera);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProfileContent(
+      userName: widget.userName,
+      userEmail: widget.userEmail,
+      userPhone: widget.userPhone,
+      userLocation: widget.userLocation,
+      userBadge: widget.userBadge,
+      reportsSubmitted: widget.reportsSubmitted,
+      animalsHelped: widget.animalsHelped,
+      ongoingCases: widget.ongoingCases,
+      rescuePoints: widget.rescuePoints,
+      avatarAssetPath: widget.avatarAssetPath,
+      profileImagePath: profileImagePath,
+      onBack: widget.onBack,
+      onSettings: widget.onSettings,
+      onEditAvatar: _showImagePickerOptions,
+      onPersonalInformation: widget.onPersonalInformation,
+      onNotifications: widget.onNotifications,
+      onMyActivity: widget.onMyActivity,
+      onRescuePoints: widget.onRescuePoints,
+      onHelpSupport: widget.onHelpSupport,
+      onLogOut: widget.onLogOut,
+      currentTabIndex: widget.currentTabIndex,
+      onTabChanged: widget.onTabChanged,
+      showBottomNav: widget.showBottomNav,
+    );
+  }
+}
+
+class _ProfileContent extends StatelessWidget {
+  const _ProfileContent({
+    this.userName = '',
+    this.userEmail = '',
+    this.userPhone = '',
+    this.userLocation = '',
+    this.userBadge = 'Rescuer',
+    this.reportsSubmitted = 32,
+    this.animalsHelped = 18,
+    this.ongoingCases = 6,
+    this.rescuePoints = 250,
+    this.avatarAssetPath,
+    this.onBack,
+    this.onSettings,
+    this.onEditAvatar,
+    this.onPersonalInformation,
+    this.onNotifications,
+    this.onMyActivity,
+    this.onRescuePoints,
+    this.onHelpSupport,
+    this.onLogOut,
+    this.currentTabIndex = 4,
+    this.onTabChanged,
+    this.showBottomNav = true,
+    this.profileImagePath,
   });
 
   final String userName;
@@ -68,10 +220,10 @@ class ProfileScreen extends StatelessWidget {
   final int currentTabIndex;
   final void Function(int index)? onTabChanged;
   final bool showBottomNav;
+  final String? profileImagePath;
 
   static const Color kBackground = Color(0xFFEDE3F5);
   static const Color kDeepPurple = Color(0xFF2E1A47);
-  static const Color kPurple = Color(0xFF6A3EA1);
   static const Color kPink = Color(0xFFE0426B);
   static const Color kSubtitleGray = Color(0xFF8D8398);
 
@@ -126,8 +278,23 @@ class ProfileScreen extends StatelessWidget {
 
   Future<void> _logOut(BuildContext context) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('token');
-    await prefs.remove('role');
+    for (final key in [
+      'token',
+      'userId',
+      'role',
+      'name',
+      'email',
+      'user_name',
+      'user_email',
+      'user_phone',
+      'user_location',
+      'user_address',
+      'organizationName',
+      'partner_status',
+      'profile_image',
+    ]) {
+      await prefs.remove(key);
+    }
 
     if (!context.mounted) return;
 
@@ -140,68 +307,48 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: kBackground,
-      body: SafeArea(
-        bottom: false,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _TopBar(
-                onBack: onBack,
-                onSettings: onSettings,
-              ),
-              const SizedBox(height: 18),
-              _ProfileCard(
-                userName: userName,
-                userEmail: userEmail,
-                userPhone: userPhone,
-                userLocation: userLocation,
-                userBadge: userBadge,
-                avatarAssetPath: avatarAssetPath,
-                onEditAvatar: onEditAvatar,
-              ),
-              const SizedBox(height: 16),
-              _StatsCard(
-                reportsSubmitted: reportsSubmitted,
-                animalsHelped: animalsHelped,
-                ongoingCases: ongoingCases,
-                rescuePoints: rescuePoints,
-                onRescuePoints: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => RescuePointsScreen(
-                        rescuePoints: rescuePoints,
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
+    return FutureBuilder<_CurrentProfile>(
+      future: _loadCurrentProfile(),
+      builder: (context, snapshot) {
+        final current = snapshot.data ??
+            _CurrentProfile(
+              name: userName,
+              email: userEmail,
+              phone: userPhone,
+              location: userLocation,
+            );
 
-              // All user information and navigation callbacks are passed here.
-              _ActionList(
-                userName: userName,
-                userEmail: userEmail,
-                userPhone: userPhone,
-                userLocation: userLocation,
-                userBadge: userBadge,
-                onPersonalInformation: onPersonalInformation,
-                onNotifications: onNotifications,
-                onMyActivity: onMyActivity ??
-                    () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const MyActivityScreen(),
-                        ),
-                      );
-                    },
-                onRescuePoints: onRescuePoints ??
-                    () {
+        return Scaffold(
+          backgroundColor: kBackground,
+          body: SafeArea(
+            bottom: false,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _TopBar(
+                    onBack: onBack,
+                    onSettings: onSettings,
+                  ),
+                  const SizedBox(height: 18),
+                  _ProfileCard(
+                    userName: current.name,
+                    userEmail: current.email,
+                    userPhone: current.phone,
+                    userLocation: current.location,
+                    userBadge: userBadge,
+                    avatarAssetPath: avatarAssetPath,
+                    profileImagePath: profileImagePath,
+                    onEditAvatar: onEditAvatar,
+                  ),
+                  const SizedBox(height: 16),
+                  _StatsCard(
+                    reportsSubmitted: reportsSubmitted,
+                    animalsHelped: animalsHelped,
+                    ongoingCases: ongoingCases,
+                    rescuePoints: rescuePoints,
+                    onRescuePoints: () {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -211,57 +358,141 @@ class ProfileScreen extends StatelessWidget {
                         ),
                       );
                     },
-                onHelpSupport: onHelpSupport ??
-                    () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => HelpSupportScreen(
-                            showBottomNav: showBottomNav,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // All user information and navigation callbacks are passed here.
+                  _ActionList(
+                    userName: current.name,
+                    userEmail: current.email,
+                    userPhone: current.phone,
+                    userLocation: current.location,
+                    userBadge: userBadge,
+                    onPersonalInformation: onPersonalInformation,
+                    onNotifications: onNotifications,
+                    onMyActivity: onMyActivity ??
+                        () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const MyActivityScreen(),
+                            ),
+                          );
+                        },
+                    onRescuePoints: onRescuePoints ??
+                        () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => RescuePointsScreen(
+                                rescuePoints: rescuePoints,
+                              ),
+                            ),
+                          );
+                        },
+                    onHelpSupport: onHelpSupport ??
+                        () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => HelpSupportScreen(
+                                showBottomNav: showBottomNav,
+                              ),
+                            ),
+                          );
+                        },
+                    onLogOut: () => _confirmLogOut(context),
+                  ),
+
+                  FutureBuilder<SharedPreferences>(
+                    future: SharedPreferences.getInstance(),
+                    builder: (context, snapshot) {
+                      final prefs = snapshot.data;
+                      final isApprovedNgo = prefs?.getString('role') == 'ngo' ||
+                          prefs?.getString('partner_status') == 'approved';
+                      if (!isApprovedNgo) return const SizedBox.shrink();
+
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 16),
+                        child: _ModeSwitchCard(
+                          title: 'Switch to NGO Dashboard',
+                          subtitle: 'Open your rescue operations workspace',
+                          onTap: () => Navigator.of(context).pushAndRemoveUntil(
+                            MaterialPageRoute(
+                              builder: (_) => const NgoHomeScreen(),
+                            ),
+                            (route) => route.isFirst,
                           ),
                         ),
                       );
                     },
-                onLogOut: () => _confirmLogOut(context),
+                  ),
+
+                  const SizedBox(height: 16),
+                  const _ImpactBanner(),
+                ],
               ),
-
-              FutureBuilder<SharedPreferences>(
-                future: SharedPreferences.getInstance(),
-                builder: (context, snapshot) {
-                  final prefs = snapshot.data;
-                  final isApprovedNgo = prefs?.getString('role') == 'ngo' ||
-                      prefs?.getString('partner_status') == 'approved';
-                  if (!isApprovedNgo) return const SizedBox.shrink();
-
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 16),
-                    child: _ModeSwitchCard(
-                      title: 'Switch to NGO Dashboard',
-                      subtitle: 'Open your rescue operations workspace',
-                      onTap: () => Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(
-                          builder: (_) => const NgoHomeScreen(),
-                        ),
-                        (route) => route.isFirst,
-                      ),
-                    ),
-                  );
-                },
-              ),
-
-              const SizedBox(height: 16),
-              const _ImpactBanner(),
-            ],
+            ),
           ),
-        ),
-      ),
-      bottomNavigationBar: showBottomNav
-          ? StrayCareBottomNav(
-              currentIndex: currentTabIndex,
-              onTap: onTabChanged ?? (index) => _handleNavTap(context, index),
-            )
-          : null,
+          bottomNavigationBar: showBottomNav
+              ? StrayCareBottomNav(
+                  currentIndex: currentTabIndex,
+                  onTap:
+                      onTabChanged ?? (index) => _handleNavTap(context, index),
+                )
+              : null,
+        );
+      },
     );
+  }
+
+  Future<_CurrentProfile> _loadCurrentProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    var profile = _CurrentProfile(
+      name: prefs.getString('name') ?? prefs.getString('user_name') ?? userName,
+      email: prefs.getString('email') ??
+          prefs.getString('user_email') ??
+          userEmail,
+      phone: prefs.getString('user_phone') ?? userPhone,
+      location: prefs.getString('user_address') ??
+          prefs.getString('user_location') ??
+          userLocation,
+    );
+
+    final token = prefs.getString('token');
+    if (token == null || token.isEmpty) return profile;
+
+    try {
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/auth/me'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) return profile;
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final user = body['data']?['user'];
+      if (user is! Map) return profile;
+
+      final name = user['name']?.toString() ?? profile.name;
+      final email = user['email']?.toString() ?? profile.email;
+      final phone = user['phone']?.toString() ?? profile.phone;
+      final address = user['address']?.toString() ??
+          user['location']?.toString() ??
+          profile.location;
+      await prefs.setString('name', name);
+      await prefs.setString('email', email);
+      await prefs.setString('user_name', name);
+      await prefs.setString('user_email', email);
+      if (phone.isNotEmpty) await prefs.setString('user_phone', phone);
+      if (address.isNotEmpty) await prefs.setString('user_address', address);
+      return _CurrentProfile(
+        name: name,
+        email: email,
+        phone: phone,
+        location: address,
+      );
+    } catch (_) {
+      return profile;
+    }
   }
 
   void _handleNavTap(BuildContext context, int index) {
@@ -370,6 +601,20 @@ class _ModeSwitchCard extends StatelessWidget {
 // Top bar
 // -----------------------------------------------------------------------------
 
+class _CurrentProfile {
+  const _CurrentProfile({
+    required this.name,
+    required this.email,
+    required this.phone,
+    required this.location,
+  });
+
+  final String name;
+  final String email;
+  final String phone;
+  final String location;
+}
+
 class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.onBack,
@@ -456,6 +701,7 @@ class _ProfileCard extends StatelessWidget {
     required this.userLocation,
     required this.userBadge,
     required this.avatarAssetPath,
+    required this.profileImagePath,
     required this.onEditAvatar,
   });
 
@@ -465,6 +711,7 @@ class _ProfileCard extends StatelessWidget {
   final String userLocation;
   final String userBadge;
   final String? avatarAssetPath;
+  final String? profileImagePath;
   final VoidCallback? onEditAvatar;
 
   @override
@@ -474,6 +721,7 @@ class _ProfileCard extends StatelessWidget {
       children: [
         _Avatar(
           assetPath: avatarAssetPath,
+          imagePath: profileImagePath,
           onEdit: onEditAvatar,
         ),
         const SizedBox(width: 16),
@@ -608,10 +856,12 @@ class _ContactRow extends StatelessWidget {
 class _Avatar extends StatelessWidget {
   const _Avatar({
     required this.assetPath,
+    required this.imagePath,
     required this.onEdit,
   });
 
   final String? assetPath;
+  final String? imagePath;
   final VoidCallback? onEdit;
 
   @override
@@ -630,13 +880,25 @@ class _Avatar extends StatelessWidget {
             ),
           ),
           child: ClipOval(
-            child: assetPath != null
-                ? Image.asset(
-                    assetPath!,
+            child: imagePath != null
+                ? Image.file(
+                    File(imagePath!),
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _fallback(),
+                    errorBuilder: (_, __, ___) => assetPath != null
+                        ? Image.asset(
+                            assetPath!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => _fallback(),
+                          )
+                        : _fallback(),
                   )
-                : _fallback(),
+                : assetPath != null
+                    ? Image.asset(
+                        assetPath!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _fallback(),
+                      )
+                    : _fallback(),
           ),
         ),
         Positioned(

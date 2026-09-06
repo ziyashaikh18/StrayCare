@@ -1,13 +1,15 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'ai_scan_assistant_screen.dart';
 
 class AiAnalysisLoadingScreen extends StatefulWidget {
-  const AiAnalysisLoadingScreen({super.key, required this.imagePath});
+  const AiAnalysisLoadingScreen({super.key, required this.image});
 
-  /// Path to the image that was captured or picked from the gallery.
-  final String imagePath;
+  final XFile image;
 
   @override
   State<AiAnalysisLoadingScreen> createState() =>
@@ -36,27 +38,62 @@ class _AiAnalysisLoadingScreenState extends State<AiAnalysisLoadingScreen>
     });
   }
 
-  void _goToResults() {
-    // Wait a beat so the progress bar visibly completes before navigating.
-    Future.delayed(const Duration(milliseconds: 200), () {
-      if (!mounted) return;
+  Future<File?> _persistImage() async {
+    final sourceFile = File(widget.image.path);
+    final exists = await sourceFile.exists();
+    debugPrint('AI Scan original image path: ${widget.image.path}');
+    debugPrint('AI Scan original file exists: $exists');
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => AiScanAssistantScreen(
-            imagePath: widget.imagePath,
-            // TODO: pass the real InjuryResult from your AI model/API here
-            // once it's wired up, e.g.:
-            // result: InjuryResult(
-            //   title: 'Possible Injury Detected',
-            //   severity: 'High',
-            //   description: '...',
-            // ),
+    if (!exists) return null;
+
+    final documentsDirectory = await getApplicationDocumentsDirectory();
+    final filename = widget.image.path.split(RegExp(r'[\\/]')).last;
+    final permanentFile = File(
+      '${documentsDirectory.path}/ai_scan_${DateTime.now().millisecondsSinceEpoch}_$filename',
+    );
+    await sourceFile.copy(permanentFile.path);
+    debugPrint('AI Scan permanent image path: ${permanentFile.path}');
+    return permanentFile;
+  }
+
+  Future<void> _goToResults() async {
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    if (!mounted) return;
+
+    File? imageFile;
+    try {
+      imageFile = await _persistImage();
+    } catch (error) {
+      debugPrint('AI Scan image persistence failed: $error');
+    }
+    if (!mounted) return;
+
+    if (imageFile == null) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          content: const Text(
+            'Image is no longer available. Please scan the animal again.',
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('OK'),
+            ),
+          ],
         ),
       );
-    });
+      if (!mounted) return;
+      Navigator.pop(context);
+      return;
+    }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AiScanAssistantScreen(imageFile: imageFile!),
+      ),
+    );
   }
 
   @override
@@ -166,10 +203,8 @@ class _AiAnalysisLoadingScreenState extends State<AiAnalysisLoadingScreen>
                     child: LinearProgressIndicator(
                       value: _progress,
                       minHeight: 7,
-                      backgroundColor:
-                          Colors.white.withValues(alpha: 0.18),
-                      valueColor:
-                          const AlwaysStoppedAnimation<Color>(
+                      backgroundColor: Colors.white.withValues(alpha: 0.18),
+                      valueColor: const AlwaysStoppedAnimation<Color>(
                         Colors.white,
                       ),
                     ),
