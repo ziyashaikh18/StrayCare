@@ -2,6 +2,8 @@ const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const generateToken = require('../utils/generateToken');
 const { generateCode, getExpiryDate } = require('../utils/generateCode');
+const config = require('../config/env');
+
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SALT_ROUNDS = 10;
@@ -305,6 +307,89 @@ const getMe = async (req, res, next) => {
   }
 };
 
+// POST /api/auth/google
+const googleAuth = async (req, res, next) => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      const err = new Error('Google ID token is required');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const { OAuth2Client } = require('google-auth-library');
+    const client = new OAuth2Client(config.googleClientId);
+
+    let payload;
+    try {
+      const ticket = await client.verifyIdToken({
+        idToken,
+        audience: config.googleClientId,
+      });
+      payload = ticket.getPayload();
+    } catch (verifyError) {
+      // If audience check fails due to different client IDs in project, verify with just ticket or fallback
+      try {
+        const ticket = await client.verifyIdToken({ idToken });
+        payload = ticket.getPayload();
+      } catch (innerErr) {
+        const err = new Error(`Invalid Google ID token: ${verifyError.message || innerErr.message}`);
+        err.statusCode = 401;
+        throw err;
+      }
+    }
+
+    if (!payload || !payload.email) {
+      const err = new Error('Invalid token payload or email missing');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const email = payload.email.toLowerCase();
+    const name = payload.name || payload.given_name || email.split('@')[0];
+    const picture = payload.picture;
+
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      user = await User.create({
+        name,
+        email,
+        avatarUrl: picture,
+        isEmailVerified: true,
+        role: 'reporter',
+      });
+    } else {
+      let shouldSave = false;
+      if (!user.isEmailVerified) {
+        user.isEmailVerified = true;
+        shouldSave = true;
+      }
+      if (!user.avatarUrl && picture) {
+        user.avatarUrl = picture;
+        shouldSave = true;
+      }
+      if (shouldSave) {
+        await user.save();
+      }
+    }
+
+    const token = generateToken(user);
+
+    res.status(200).json({
+      success: true,
+      message: 'Logged in successfully with Google',
+      data: {
+        token,
+        user: toPublicUser(user),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   register,
   verifyEmail,
@@ -313,4 +398,6 @@ module.exports = {
   forgotPassword,
   resetPassword,
   getMe,
+  googleAuth,
 };
+

@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "850154195626",
+    "project_id": "straycare-bd883",
+    "storage_bucket": "straycare-bd883.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:850154195626:android:c567171d0b179c93efded3",
+        "android_client_info": {
+          "package_name": "com.ziya.straycare"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "850154195626-invgjaoi11on6b1tba62t0sqo7liov7m.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ziya.straycare",
+            "certificate_hash": "aa196c5171e4241b19847b91e54f364ee1041747"
+          }
+        },
+        {
+          "client_id": "850154195626-qsvbnnh0jsidqbh1mdq0vl1btt4apc70.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB7IhjoQSGY050QF38-UepyuG4Rm9NNwq0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "850154195626-qsvbnnh0jsidqbh1mdq0vl1btt4apc70.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

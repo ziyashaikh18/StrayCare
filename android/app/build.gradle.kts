@@ -1,10 +1,11 @@
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
+    id("com.google.gms.google-services")
 }
 
 android {
-    namespace = "com.example.straycare_splash"
+    namespace = "com.ziya.straycare"
 
     // Updated to fix geocoding_android compileSdk error
     compileSdk = 36
@@ -17,7 +18,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.straycare_splash"
+        applicationId = "com.ziya.straycare"
 
         minSdk = flutter.minSdkVersion
 

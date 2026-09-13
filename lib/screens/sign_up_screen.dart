@@ -8,6 +8,12 @@ import '../widgets/app_text_field.dart';
 import '../widgets/primary_gradient_button.dart';
 import '../widgets/social_login_button.dart';
 
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'home_screen.dart';
+import 'admin_home_screen.dart';
+import 'ngo_home_screen.dart';
+
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
 
@@ -25,6 +31,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: ['email', 'profile'],
+  );
+  bool _isLoadingGoogle = false;
 
   //========================
   // State Variables
@@ -132,8 +142,143 @@ void _showMessage(String message) {
   );
 }
 
-  void _handleGoogleSignIn() {
-    // TODO: Google Sign In
+  Future<void> _handleGoogleSignIn() async {
+    if (_isLoadingGoogle) return;
+    setState(() => _isLoadingGoogle = true);
+    debugPrint("[GoogleSignUp] Button clicked.");
+
+    try {
+      // Ensure previous session doesn't block re-selecting account if needed
+      await _googleSignIn.signOut().catchError((_) => null);
+
+      debugPrint("[GoogleSignUp] Google account picker opening...");
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+
+      if (googleUser == null) {
+        debugPrint("[GoogleSignUp] User cancelled Google Sign-In.");
+        if (mounted) {
+          _showMessage("Google sign in cancelled");
+        }
+        return;
+      }
+
+      debugPrint("[GoogleSignUp] Google account picker selected: ${googleUser.email}");
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final String? idToken = googleAuth.idToken;
+
+      if (idToken == null || idToken.isEmpty) {
+        debugPrint("[GoogleSignUp] Error: Google ID token is null or empty.");
+        if (mounted) {
+          _showMessage("Failed to retrieve Google ID token");
+        }
+        return;
+      }
+
+      debugPrint("[GoogleSignUp] ID token received. Sending to backend: ${ApiConfig.baseUrl}/api/auth/google");
+      final response = await http.post(
+        Uri.parse("${ApiConfig.baseUrl}/api/auth/google"),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({
+          "idToken": idToken,
+        }),
+      );
+
+      debugPrint("[GoogleSignUp] Backend response status: ${response.statusCode}, body: ${response.body}");
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data["success"] == true) {
+        final prefs = await SharedPreferences.getInstance();
+        for (final key in [
+          'token',
+          'userId',
+          'role',
+          'name',
+          'email',
+          'user_name',
+          'user_email',
+          'user_phone',
+          'user_location',
+          'user_address',
+          'organizationName',
+          'partner_status',
+          'profile_image',
+        ]) {
+          await prefs.remove(key);
+        }
+
+        await prefs.setString("token", data["data"]["token"]);
+
+        final user = data["data"]?["user"];
+        final role = user is Map ? user["role"]?.toString() : null;
+        if (user is Map) {
+          final userId = user["id"]?.toString() ?? user["_id"]?.toString();
+          final name = user["name"]?.toString() ?? "";
+          final email = user["email"]?.toString() ?? "";
+          if (userId != null && userId.isNotEmpty) {
+            await prefs.setString("userId", userId);
+          }
+          if (role != null && role.isNotEmpty) {
+            await prefs.setString("role", role);
+          }
+          await prefs.setString("name", name);
+          await prefs.setString("email", email);
+
+          final userFields = <String, String>{
+            "user_name": name,
+            "user_email": email,
+            "user_phone": user["phone"]?.toString() ?? "",
+            "user_location": user["location"]?.toString() ?? "",
+            "organizationName": user["organizationName"]?.toString() ?? "",
+            "user_address": user["address"]?.toString() ?? "",
+            "partner_status": user["partnerStatus"]?.toString() ?? "",
+          };
+          for (final entry in userFields.entries) {
+            if (entry.value.isNotEmpty) {
+              await prefs.setString(entry.key, entry.value);
+            } else {
+              await prefs.remove(entry.key);
+            }
+          }
+        }
+
+        if (!mounted) return;
+
+        debugPrint("[GoogleSignUp] Navigation completed. Role: $role");
+        if (role == "admin") {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const AdminHomeScreen()),
+            (route) => false,
+          );
+        } else if (role == "ngo") {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const NgoHomeScreen()),
+            (route) => false,
+          );
+        } else {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+            (route) => false,
+          );
+        }
+      } else {
+        if (!mounted) return;
+        debugPrint("[GoogleSignUp] Backend failed: ${data["message"]}");
+        _showMessage(data["message"] ?? "Google Sign-In failed");
+      }
+    } catch (e) {
+      debugPrint("[GoogleSignUp] Network/Execution error: $e");
+      if (!mounted) return;
+      _showMessage("Google Sign-In error: $e");
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingGoogle = false);
+      }
+    }
   }
 
   void _handleAppleSignIn() {
