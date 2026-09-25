@@ -45,7 +45,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'email': widget.email, 'code': code}),
           )
-          .timeout(const Duration(seconds: 20));
+          .timeout(ApiConfig.requestTimeout);
       if (!mounted) return;
       final data = jsonDecode(response.body);
       if (response.statusCode != 200 || data['success'] != true) {
@@ -91,7 +91,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'email': widget.email}),
           )
-          .timeout(const Duration(seconds: 20));
+          .timeout(ApiConfig.requestTimeout);
       if (!mounted) return;
       final data = jsonDecode(response.body);
       _message(data['message']?.toString() ?? 'Could not resend code.');

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:straycare_splash/config/api_config.dart';
 
 import 'help_support_screen.dart';
 import 'home_screen.dart';
@@ -25,8 +26,6 @@ class NgoProfileScreen extends StatefulWidget {
 }
 
 class _NgoProfileScreenState extends State<NgoProfileScreen> {
-  static const _apiBaseUrl = 'http://10.250.236.99:5000';
-
   String _name = 'Rescue team member';
   String _email = 'Email not available';
   String _phone = 'Phone not provided';
@@ -67,12 +66,12 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
   Future<void> _loadStatistics(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('$_apiBaseUrl/api/reports/admin/all'),
+        Uri.parse('${ApiConfig.baseUrl}/api/reports/admin/all'),
         headers: {
           'Content-Type': 'application/json',
           if (token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
-      );
+      ).timeout(ApiConfig.requestTimeout);
       if (response.statusCode != 200) return;
 
       final data = jsonDecode(response.body);
@@ -263,13 +262,13 @@ class _NgoProfileScreenState extends State<NgoProfileScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final response = await http.post(
-        Uri.parse('$_apiBaseUrl/api/ngo/remove-partnership'),
+        Uri.parse('${ApiConfig.baseUrl}/api/ngo/remove-partnership'),
         headers: {
           'Content-Type': 'application/json',
           if (prefs.getString('token')?.isNotEmpty == true)
             'Authorization': 'Bearer ${prefs.getString('token')}',
         },
-      );
+      ).timeout(ApiConfig.requestTimeout);
       final data = jsonDecode(response.body) as Map<String, dynamic>;
 
       if (response.statusCode < 200 ||

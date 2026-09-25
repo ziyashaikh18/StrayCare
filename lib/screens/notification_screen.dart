@@ -117,7 +117,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final response = await http.get(
         Uri.parse('${ApiConfig.baseUrl}/api/notifications'),
         headers: {'Authorization': 'Bearer $token'},
-      );
+      ).timeout(ApiConfig.requestTimeout);
       if (response.statusCode != 200) return;
       final notifications = (jsonDecode(response.body)['data']['notifications'] as List)
           .map((item) => NotificationItem.fromJson(item as Map<String, dynamic>))

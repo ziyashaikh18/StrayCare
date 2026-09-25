@@ -9,6 +9,7 @@ import 'package:http_parser/http_parser.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:straycare_splash/utils/image_upload.dart';
+import '../config/api_config.dart';
 import 'notification_screen.dart';
 
 /// StrayCare "AI Analysis & Priority" screen — runs AFTER the report form
@@ -103,10 +104,6 @@ class AiAnalysisResult {
 
 class _AiAnalysisScreenState extends State<AiAnalysisScreen>
     with SingleTickerProviderStateMixin {
-  // Same convention used in report_screen.dart / login_screen.dart — keep
-  // this in sync with your machine's current LAN IP.
-  static const String _apiBaseUrl = 'http://10.250.236.99:5000';
-
   static const Color kBackground = Color(0xFFF8F2FA);
   static const Color kDeepPurple = Color(0xFF2E1A47);
   static const Color kPurple = Color(0xFF6A3EA1);
@@ -163,7 +160,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
 
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('$_apiBaseUrl/api/ai/analyze'),
+        Uri.parse('${ApiConfig.baseUrl}/api/ai/analyze'),
       )
         ..headers['Authorization'] = 'Bearer $token'
         ..files.add(

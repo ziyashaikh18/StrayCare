@@ -53,7 +53,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
               'newPassword': password,
             }),
           )
-          .timeout(const Duration(seconds: 20));
+          .timeout(ApiConfig.requestTimeout);
       if (!mounted) return;
       final data = jsonDecode(response.body);
       if (response.statusCode == 200 && data['success'] == true) {

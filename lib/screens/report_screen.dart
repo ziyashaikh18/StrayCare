@@ -16,6 +16,7 @@ import 'package:straycare_splash/screens/ai_scanner_screen.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
 import 'package:straycare_splash/screens/my_report_screen.dart';
 import 'package:straycare_splash/screens/report_submitted_screen.dart';
+import 'package:straycare_splash/config/api_config.dart';
 import 'package:straycare_splash/utils/image_upload.dart';
 
 /// StrayCare "Report a Rescue" screen — step 1 of 4.
@@ -27,7 +28,6 @@ class ReportRescueScreen extends StatefulWidget {
 }
 
 class _ReportRescueScreenState extends State<ReportRescueScreen> {
-  static const String _apiBaseUrl = 'http://10.250.236.99:5000';
   static const String _geoapifyApiKey = "fd50f584772e4658b55d68b83c3ea1e8";
 
   double? _latitude;
@@ -292,7 +292,7 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
     try {
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('$_apiBaseUrl/api/reports'),
+        Uri.parse('${ApiConfig.baseUrl}/api/reports'),
       )
         ..headers['Authorization'] = 'Bearer $token'
         ..fields['animalType'] = result.animalType
@@ -320,7 +320,7 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
         ),
       );
 
-      final response = await request.send();
+      final response = await request.send().timeout(ApiConfig.requestTimeout);
       final responseBody = await response.stream.bytesToString();
       debugPrint("Report API Status: ${response.statusCode}");
       debugPrint("Report API Response: $responseBody");

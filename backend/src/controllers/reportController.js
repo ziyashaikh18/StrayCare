@@ -16,7 +16,7 @@ const STATUS_ORDER = {
 /**
  * Builds the public URL for an uploaded image based on the request host,
  * so the frontend gets a directly-usable link regardless of environment.
- * e.g. http://10.0.2.2:5000/uploads/reports/report_123.jpg
+ * The host is taken from the deployed request environment.
  */
 const buildImageUrl = (req, filename) => {
   return `${req.protocol}://${req.get('host')}/uploads/reports/${filename}`;

@@ -44,9 +44,9 @@ const PORT = config.port;
 const server = app.listen(PORT, () => {
   console.log(`=========================================`);
   console.log(`🚀 Server running in ${config.nodeEnv} mode`);
-  console.log(`📡 Listening on: http://localhost:${PORT}`);
-  console.log(`🩺 Health Check: http://localhost:${PORT}/api/health`);
-  console.log(`🧪 Test Route:   http://localhost:${PORT}/api/test`);
+  console.log(`📡 Listening on configured port ${PORT}`);
+  console.log(`🩺 Health Check: /api/health`);
+  console.log(`🧪 Test Route:   /api/test`);
   console.log(`=========================================`);
 });
 

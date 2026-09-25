@@ -46,7 +46,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'email': email}),
           )
-          .timeout(const Duration(seconds: 20));
+          .timeout(ApiConfig.requestTimeout);
       if (!mounted) return;
       final data = jsonDecode(response.body);
       if (response.statusCode == 200 && data['success'] == true) {

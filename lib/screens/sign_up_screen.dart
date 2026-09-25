@@ -118,7 +118,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
             'password': password,
           }),
         )
-        .timeout(const Duration(seconds: 20));
+        .timeout(ApiConfig.requestTimeout);
     if (!mounted) return;
     final data = jsonDecode(response.body);
     if (response.statusCode == 201 && data['success'] == true) {
@@ -130,7 +130,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
       _showMessage(data['message']?.toString() ?? 'Unable to create account.');
     }
   } on Exception catch (error) {
-    if (mounted) _showMessage('Unable to create account: $error');
+    if (mounted) {
+      _showMessage(ApiConfig.messageFor(error, fallback: 'Unable to create account.'));
+    }
   } finally {
     if (mounted) setState(() => _isSubmitting = false);
   }
@@ -183,7 +185,7 @@ void _showMessage(String message) {
         body: jsonEncode({
           "idToken": idToken,
         }),
-      );
+      ).timeout(ApiConfig.requestTimeout);
 
       debugPrint("[GoogleSignUp] Backend response status: ${response.statusCode}, body: ${response.body}");
       final data = jsonDecode(response.body);
@@ -273,7 +275,7 @@ void _showMessage(String message) {
     } catch (e) {
       debugPrint("[GoogleSignUp] Network/Execution error: $e");
       if (!mounted) return;
-      _showMessage("Google Sign-In error: $e");
+      _showMessage(ApiConfig.messageFor(e, fallback: 'Google Sign-In failed.'));
     } finally {
       if (mounted) {
         setState(() => _isLoadingGoogle = false);

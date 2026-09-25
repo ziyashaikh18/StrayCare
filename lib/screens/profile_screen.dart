@@ -466,7 +466,7 @@ class _ProfileContent extends StatelessWidget {
       final response = await http.get(
         Uri.parse('${ApiConfig.baseUrl}/api/auth/me'),
         headers: {'Authorization': 'Bearer $token'},
-      );
+      ).timeout(ApiConfig.requestTimeout);
       if (response.statusCode != 200) return profile;
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final user = body['data']?['user'];

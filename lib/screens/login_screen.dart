@@ -59,7 +59,7 @@ class _LoginScreenState extends State<LoginScreen> {
           "email": _emailController.text.trim(),
           "password": _passwordController.text.trim(),
         }),
-      );
+      ).timeout(ApiConfig.requestTimeout);
 
       final data = jsonDecode(response.body);
 
@@ -160,7 +160,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Cannot connect to backend: $e"),
+          content: Text(ApiConfig.messageFor(e, fallback: 'Unable to complete login.')),
         ),
       );
     }
@@ -211,7 +211,7 @@ class _LoginScreenState extends State<LoginScreen> {
         body: jsonEncode({
           "idToken": idToken,
         }),
-      );
+      ).timeout(ApiConfig.requestTimeout);
 
       debugPrint("[GoogleSignIn] Backend response status: ${response.statusCode}, body: ${response.body}");
       final data = jsonDecode(response.body);
@@ -314,7 +314,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Google Sign-In error: $e"),
+          content: Text(ApiConfig.messageFor(e, fallback: 'Google Sign-In failed.')),
         ),
       );
     } finally {

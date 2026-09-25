@@ -154,7 +154,7 @@ class _NearbyCasesScreenState extends State<NearbyCasesScreen> {
       final response = await http.get(
         Uri.parse('${ApiConfig.baseUrl}/api/reports/nearby?lat=$latitude&lng=$longitude&radiusKm=50'),
         headers: {'Authorization': 'Bearer $token'},
-      );
+      ).timeout(ApiConfig.requestTimeout);
       if (response.statusCode != 200) return;
       final reports = (jsonDecode(response.body)['data']['reports'] as List)
           .where((report) => report['severity'] == 'Critical' || report['severity'] == 'High')

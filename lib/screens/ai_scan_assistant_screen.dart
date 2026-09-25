@@ -186,7 +186,7 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen>
         ),
       );
 
-    final response = await request.send();
+    final response = await request.send().timeout(ApiConfig.requestTimeout);
     final body = await response.stream.bytesToString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     if (response.statusCode < 200 ||
@@ -213,7 +213,7 @@ class _AiScanAssistantScreenState extends State<AiScanAssistantScreen>
       _addMessage(_ChatMsg(
         type: _MsgType.botText,
         time: _now,
-        text: error.toString().replaceFirst('Exception: ', ''),
+        text: ApiConfig.messageFor(error, fallback: 'AI Scan is unavailable.'),
       ));
     }
   }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:straycare_splash/config/api_config.dart';
 
 class RescuePartnerRequestsScreen extends StatefulWidget {
   const RescuePartnerRequestsScreen({super.key});
@@ -12,7 +13,6 @@ class RescuePartnerRequestsScreen extends StatefulWidget {
 }
 
 class _RescuePartnerRequestsScreenState extends State<RescuePartnerRequestsScreen> {
-  static const _apiBaseUrl = 'http://10.250.236.99:5000';
   bool _loading = true;
   List<Map<String, dynamic>> _requests = [];
 
@@ -26,9 +26,9 @@ class _RescuePartnerRequestsScreenState extends State<RescuePartnerRequestsScree
     try {
       final prefs = await SharedPreferences.getInstance();
       final response = await http.get(
-        Uri.parse('$_apiBaseUrl/api/partner-requests?status=pending'),
+        Uri.parse('${ApiConfig.baseUrl}/api/partner-requests?status=pending'),
         headers: {'Authorization': 'Bearer ${prefs.getString('token') ?? ''}'},
-      );
+      ).timeout(ApiConfig.requestTimeout);
       if (response.statusCode != 200) throw Exception('Could not load requests');
       final data = jsonDecode(response.body);
       final requests = data['data']?['requests'];
@@ -36,7 +36,11 @@ class _RescuePartnerRequestsScreenState extends State<RescuePartnerRequestsScree
         setState(() => _requests = requests.whereType<Map>().map((item) => Map<String, dynamic>.from(item)).toList());
       }
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiConfig.messageFor(error))),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -45,13 +49,13 @@ class _RescuePartnerRequestsScreenState extends State<RescuePartnerRequestsScree
   Future<void> _review(Map<String, dynamic> request, String action) async {
     final prefs = await SharedPreferences.getInstance();
     final response = await http.patch(
-      Uri.parse('$_apiBaseUrl/api/partner-requests/${request['id']}/$action'),
+      Uri.parse('${ApiConfig.baseUrl}/api/partner-requests/${request['id']}/$action'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ${prefs.getString('token') ?? ''}',
       },
       body: jsonEncode(action == 'reject' ? {'rejectionReason': 'Application did not meet current partner requirements.'} : {}),
-    );
+    ).timeout(ApiConfig.requestTimeout);
     if (!mounted) return;
     if (response.statusCode >= 200 && response.statusCode < 300) {
       _loadRequests();

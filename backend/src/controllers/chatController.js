@@ -192,7 +192,9 @@ Return only valid JSON:
 }`;
 
   const client = new GoogleGenerativeAI(GEMINI_API_KEY);
-  const model = client.getGenerativeModel({ model: 'gemini-3.6-flash' });
+  const model = client.getGenerativeModel({
+    model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+  });
   const response = await model.generateContent([
     { inlineData: { mimeType, data: imageBase64 } },
     prompt,

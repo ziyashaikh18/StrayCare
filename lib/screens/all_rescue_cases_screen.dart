@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:straycare_splash/config/api_config.dart';
 import 'package:straycare_splash/widgets/bottom_nav.dart';
 import 'package:straycare_splash/screens/home_screen.dart';
 import 'package:straycare_splash/screens/report_screen.dart';
@@ -214,8 +215,6 @@ class AllRescueCasesScreen extends StatefulWidget {
 enum _DashboardFilter { all, critical, inReview, duplicates, resolved }
 
 class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
-  static const String _apiBaseUrl = 'http://10.250.236.99:5000';
-
   _DashboardFilter _filter = _DashboardFilter.all;
 
   bool _isLoading = true;
@@ -239,12 +238,12 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
       final token = prefs.getString('token') ?? '';
 
       final response = await http.get(
-        Uri.parse('$_apiBaseUrl/api/reports/admin/all'),
+        Uri.parse('${ApiConfig.baseUrl}/api/reports/admin/all'),
         headers: {
           'Content-Type': 'application/json',
           if (token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
-      );
+      ).timeout(ApiConfig.requestTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -286,7 +285,7 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = 'Cannot connect to backend: $e';
+          _errorMessage = ApiConfig.messageFor(e, fallback: 'Unable to load rescue cases.');
           _isLoading = false;
         });
       }
@@ -299,12 +298,12 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
       final token = prefs.getString('token') ?? '';
 
       final response = await http.patch(
-        Uri.parse('$_apiBaseUrl/api/reports/$id/assign'),
+        Uri.parse('${ApiConfig.baseUrl}/api/reports/$id/assign'),
         headers: {
           'Content-Type': 'application/json',
           if (token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
-      );
+      ).timeout(ApiConfig.requestTimeout);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         if (mounted) {
@@ -351,13 +350,13 @@ class _AllRescueCasesScreenState extends State<AllRescueCasesScreen> {
       final statusString = _toBackendStatus(status);
 
       final response = await http.patch(
-        Uri.parse('$_apiBaseUrl/api/reports/$id/status'),
+        Uri.parse('${ApiConfig.baseUrl}/api/reports/$id/status'),
         headers: {
           'Content-Type': 'application/json',
           if (token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
         body: jsonEncode({'status': statusString}),
-      );
+      ).timeout(ApiConfig.requestTimeout);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         if (mounted) {

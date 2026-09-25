@@ -46,7 +46,7 @@ class _AdminPartnersScreenState extends State<AdminPartnersScreen> {
           if (prefs.getString('token')?.isNotEmpty == true)
             'Authorization': 'Bearer ${prefs.getString('token')}',
         },
-      );
+      ).timeout(ApiConfig.requestTimeout);
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode != 200 || body['success'] != true) {
         throw Exception(body['message'] ?? 'Could not load approved partners');
@@ -67,7 +67,7 @@ class _AdminPartnersScreenState extends State<AdminPartnersScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = error.toString().replaceFirst('Exception: ', '');
+        _error = ApiConfig.messageFor(error, fallback: 'Unable to load approved partners.');
       });
     }
   }

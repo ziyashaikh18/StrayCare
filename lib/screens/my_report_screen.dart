@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:straycare_splash/config/api_config.dart';
 import 'package:straycare_splash/screens/profile_screen.dart';
 import 'package:straycare_splash/screens/report_screen.dart';
 import 'package:straycare_splash/screens/ai_scanner_screen.dart';
@@ -137,8 +138,6 @@ class MyReportsScreen extends StatefulWidget {
 }
 
 class _MyReportsScreenState extends State<MyReportsScreen> {
-  static const String _apiBaseUrl = 'http://10.250.236.99:5000';
-
   static const Color kBackground = Color(0xFFF8F2FA);
   static const Color kDeepPurple = Color(0xFF2E1A47);
   static const Color kPurple = Color(0xFF6A3EA1);
@@ -176,12 +175,12 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
       final token = prefs.getString('token') ?? '';
 
       final response = await http.get(
-        Uri.parse('$_apiBaseUrl/api/reports/my'),
+        Uri.parse('${ApiConfig.baseUrl}/api/reports/my'),
         headers: {
           'Content-Type': 'application/json',
           if (token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
-      );
+      ).timeout(ApiConfig.requestTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -223,7 +222,7 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = 'Cannot connect to server: $e';
+          _errorMessage = ApiConfig.messageFor(e, fallback: 'Unable to load your reports.');
           _isLoading = false;
         });
       }

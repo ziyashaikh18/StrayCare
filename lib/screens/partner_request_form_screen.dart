@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:straycare_splash/config/api_config.dart';
 
 import 'login_screen.dart';
 
@@ -15,7 +16,6 @@ class PartnerRequestFormScreen extends StatefulWidget {
 }
 
 class _PartnerRequestFormScreenState extends State<PartnerRequestFormScreen> {
-  static const _apiBaseUrl = 'http://10.250.236.99:5000';
   final _formKey = GlobalKey<FormState>();
   final _organization = TextEditingController();
   final _contact = TextEditingController();
@@ -61,12 +61,12 @@ class _PartnerRequestFormScreenState extends State<PartnerRequestFormScreen> {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token') ?? '';
       final response = await http.get(
-        Uri.parse('$_apiBaseUrl/api/partner-requests/my-status'),
+        Uri.parse('${ApiConfig.baseUrl}/api/partner-requests/my-status'),
         headers: {
           'Content-Type': 'application/json',
           if (token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
-      );
+      ).timeout(ApiConfig.requestTimeout);
 
       if (!mounted) return;
       if (response.statusCode != 200) {
@@ -106,7 +106,7 @@ class _PartnerRequestFormScreenState extends State<PartnerRequestFormScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final response = await http.post(
-        Uri.parse('$_apiBaseUrl/api/partner-requests'),
+        Uri.parse('${ApiConfig.baseUrl}/api/partner-requests'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${prefs.getString('token') ?? ''}',
@@ -121,7 +121,7 @@ class _PartnerRequestFormScreenState extends State<PartnerRequestFormScreen> {
           'animalsSupported': _animals.text.trim(),
           'emergencyRescue': _emergencyRescue,
         }),
-      );
+      ).timeout(ApiConfig.requestTimeout);
       if (!mounted) return;
       if (response.statusCode == 201) {
         await _fetchPartnerStatus();
@@ -130,7 +130,11 @@ class _PartnerRequestFormScreenState extends State<PartnerRequestFormScreen> {
         throw Exception(data['message'] ?? 'Could not submit request');
       }
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiConfig.messageFor(error))),
+        );
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
