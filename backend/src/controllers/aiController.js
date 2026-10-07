@@ -200,7 +200,7 @@ Ensure:
     const client = new GoogleGenerativeAI(GEMINI_API_KEY);
 
     const model = client.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
     });
 
     console.log('[Gemini] Sending image with MIME type:', mimeType);
