@@ -18,4 +18,12 @@ if (!config.jwtSecret) {
   );
 }
 
+if (!process.env.GEMINI_API_KEY) {
+  console.warn('GEMINI_API_KEY is not set; AI analysis will be unavailable.');
+}
+
+if (!process.env.GEMINI_MODEL) {
+  console.warn('GEMINI_MODEL is not set; the default Gemini model will be used.');
+}
+
 module.exports = config;

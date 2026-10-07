@@ -201,6 +201,7 @@ Ensure:
 
     const model = client.getGenerativeModel({
       model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      generationConfig: { responseMimeType: 'application/json' },
     });
 
     console.log('[Gemini] Sending image with MIME type:', mimeType);
@@ -280,19 +281,30 @@ const analyzeImage = async (req, res, next) => {
     });
 
     let analysisResult;
+    let retryCount = 0;
 
-    try {
-      analysisResult = await callGemini(
-        imageBase64,
-        mimeType
-      );
-    } catch {
-      const err = new Error(
-        'AI analysis is temporarily unavailable.'
-      );
+    while (true) {
+      try {
+        analysisResult = await callGemini(imageBase64, mimeType);
+        break;
+      } catch (error) {
+        const status = Number(error.status);
+        console.error('Gemini analysis failed:', {
+          status: error.status,
+          message: error.message,
+        });
 
-      err.statusCode = 503;
-      throw err;
+        if (![429, 503].includes(status) || retryCount >= 2) {
+          const err = new Error(
+            'AI analysis is temporarily unavailable.'
+          );
+          err.statusCode = status === 429 ? 429 : 503;
+          throw err;
+        }
+
+        retryCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
     }
 
     fs.unlink(req.file.path, (err) => {

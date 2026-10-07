@@ -174,7 +174,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen>
         );
 
       final streamedResponse = await request.send().timeout(
-            const Duration(seconds: 200),
+            const Duration(seconds: 60),
             onTimeout: () => throw Exception(
               'The AI analysis took too long. Please try again.',
             ),
