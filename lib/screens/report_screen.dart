@@ -70,6 +70,7 @@ class _ReportRescueScreenState extends State<ReportRescueScreen> {
     super.initState();
 
     _descriptionController.addListener(_updateDescriptionLength);
+    ApiConfig.prewarmServer();
   }
 
   void _updateDescriptionLength() {
